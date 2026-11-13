@@ -1,0 +1,14 @@
+services:
+  zbproxy:
+    image: ghcr.io/sohugepenguin/zbproxy:latest
+    restart: unless-stopped
+    environment:
+      ZBPROXY_ADMIN_PASSWORD: ${ZBPROXY_ADMIN_PASSWORD:?Set ZBPROXY_ADMIN_PASSWORD in .env}
+    ports:
+      - "25565:25565"
+      - "127.0.0.1:35565:8080"
+    volumes:
+      - zbproxy-data:/data
+
+volumes:
+  zbproxy-data:

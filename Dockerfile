@@ -1,51 +1,28 @@
-FROM golang:alpine as build
+# syntax=docker/dockerfile:1
+FROM --platform=$BUILDPLATFORM golang:1-alpine AS build
 
-WORKDIR /build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
 
-RUN apk add --no-cache git \
-    && git clone https://github.com/layou233/ZBProxy.git \
-    && cd ZBProxy \
-    && CGO_ENABLED=0 GOAMD64=v3 go build -v -ldflags="-s -w" -o ../ZBProxy-linux \
-    && echo '{ \
-    "Services": [ \
-        {\
-            "Name": "HypixelDefault",\
-            "TargetAddress": "mc.hypixel.net",\
-            "TargetPort": 25565,\
-            "Listen": 25565,\
-            "Flow": "auto",\
-            "IPAccess": {\
-                "Mode": ""\
-            },\
-            "Minecraft": {\
-                "EnableHostnameRewrite": true,\
-                "OnlineCount": {\
-                    "Max": 114514,\
-                    "Online": -1,\
-                    "EnableMaxLimit": false\
-                },\
-                "NameAccess": {\
-                    "Mode": ""\
-                },\
-                "AnyDestSettings": {},\
-                "MotdFavicon": "{DEFAULT_MOTD}",\
-                "MotdDescription": "§d{NAME}§e service is working on §a§o{INFO}§r§c§lProxy for §6§n{HOST}:{PORT}§r" \
-            },\
-            "TLSSniffing": {\
-                "RejectNonTLS": false\
-            },\
-            "Outbound": {\
-                "Type": ""\
-            }\
-        }\
-    ],\
-    "Lists": {}\
-}'\
-> ../ZBProxy.json
+ARG TARGETOS
+ARG TARGETARCH
+ARG VCS_REF=unknown
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} \
+    go build -trimpath -ldflags="-s -w -X github.com/layou233/zbproxy/v3/version.CommitHash=${VCS_REF}" \
+    -o /out/zbproxy ./cmd/zbproxy
 
-FROM gcr.io/distroless/static-debian11:latest
+FROM gcr.io/distroless/static-debian12:nonroot
 
-COPY --from=build /build/ZBProxy-linux /
-COPY --from=build /build/ZBProxy.json /
+LABEL org.opencontainers.image.source="https://github.com/SoHugePenguin/ZBProxy" \
+      org.opencontainers.image.licenses="Apache-2.0"
 
-CMD [ "/ZBProxy-linux" ]
+COPY --from=build /out/zbproxy /usr/local/bin/zbproxy
+COPY --chown=65532:65532 deploy/ZBProxy.example.json /data/ZBProxy.json
+
+WORKDIR /data
+VOLUME ["/data"]
+EXPOSE 25565/tcp 8080/tcp
+ENTRYPOINT ["/usr/local/bin/zbproxy"]

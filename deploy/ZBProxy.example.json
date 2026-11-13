@@ -1,0 +1,59 @@
+{
+    "Log": {
+        "Level": "warn"
+    },
+    "Web": {
+        "Enabled": true,
+        "Bind": "0.0.0.0",
+        "Port": 8080,
+        "AccessLog": true,
+        "Username": "admin",
+        "Password": ""
+    },
+    "Services": [
+        {
+            "Name": "Hypixel-in",
+            "Bind": "0.0.0.0",
+            "Listen": 25565
+        }
+    ],
+    "Router": {
+        "DefaultOutbound": "RESET",
+        "Rules": [
+            {
+                "Type": "always",
+                "Sniff": [
+                    "minecraft"
+                ]
+            },
+            {
+                "Type": "ServiceName",
+                "Parameter": "Hypixel-in",
+                "Rewrite": {
+                    "Minecraft": {
+                        "Hostname": "mc.hypixel.net",
+                        "Port": 25565
+                    }
+                },
+                "Outbound": "Hypixel-out"
+            }
+        ]
+    },
+    "Outbounds": [
+        {
+            "Name": "Hypixel-out",
+            "TargetAddress": "mc.hypixel.net",
+            "TargetPort": 25565,
+            "Minecraft": {
+                "OnlineCount": {
+                    "Max": 20,
+                    "Online": -1,
+                    "EnableMaxLimit": false
+                },
+                "MotdFavicon": "{DEFAULT_MOTD}",
+                "MotdDescription": "ZBProxy · Hypixel 自用代理"
+            }
+        }
+    ],
+    "Lists": {}
+}

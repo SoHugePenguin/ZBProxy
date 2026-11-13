@@ -2,3 +2,5 @@
 /bin/
 /ZBProxy.json
 /ZBProxy.whitelist.json
+/.env
+/data/

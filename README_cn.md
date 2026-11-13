@@ -113,3 +113,41 @@ ZBPROXY_ADMIN_PASSWORD='替换为自己的密码' ./zbproxy -web 0.0.0.0:8080
 ```
 
 网站日志直接输出到终端：启动/停止信息始终显示；访问日志默认启用，包含请求方法、路径、状态码、来源地址和耗时。网站日志独立于代理的 `Log.Level`，因此代理设为 `warn` 时也能看到网站正常访问。将 `Web.AccessLog` 设为 `false` 可关闭逐请求日志，减少终端输出；修改后重启生效。
+
+## Docker / GHCR 镜像
+
+仓库的 `Docker image` 工作流会在推送 `dev-next`、推送 `v*` 标签或手动运行时，测试代码并构建 `linux/amd64` 和 `linux/arm64` 镜像。拉取请求只验证构建，不发布。镜像地址为 `ghcr.io/sohugepenguin/zbproxy`，包含 `latest`、分支名、完整提交 SHA 和版本标签。
+
+镜像从本次仓库源码编译，使用精简的非 root 运行环境，不包含本地密码、名单、Git 元数据或预编译文件。容器内游戏端口为 `25565`，网页端口为 `8080`，配置和白名单均保存在 `/data`。
+
+发布完成后可使用仓库中的 `compose.yaml`：
+
+```bash
+cp .env.example .env
+# 编辑 .env，填入自己的管理密码
+# 首次发布的 GHCR 包可能是私有的；需要先 docker login ghcr.io，或由所有者将包设为公开。
+docker compose up -d
+```
+
+游戏连接地址为服务器的 `25565` 端口，网页默认仅映射到宿主机 `http://127.0.0.1:35565`。用户名默认 `admin`，密码来自 `.env`。`Web.Username`、`Web.Bind`、`Web.Port` 等设置仍在 `/data/ZBProxy.json` 中配置；环境变量密码优先于配置文件。发布端口不同于容器端口，修改端口时注意同步 `compose.yaml` 中的映射。
+
+命名卷 `zbproxy-data` 会在首次运行时自动初始化默认配置，并持续保存白名单。查看网站与代理日志：
+
+```bash
+docker compose logs -f zbproxy
+```
+
+如需在宿主机直接编辑配置，可使用目录挂载代替命名卷：
+
+```bash
+mkdir -p data
+cp deploy/ZBProxy.example.json data/ZBProxy.json
+# 编辑 data/ZBProxy.json 中的 Username、Password、Bind、Port 等配置
+# 容器以当前用户身份运行，确保它能保存白名单文件
+docker run -d --name zbproxy --restart unless-stopped \
+  --user "$(id -u):$(id -g)" \
+  -p 25565:25565 -p 127.0.0.1:35565:8080 \
+  -v "$PWD/data:/data" ghcr.io/sohugepenguin/zbproxy:latest
+```
+
+配置目录包含密码和名单，不要提交到 Git。首次在 fork 中使用 Actions 时，需启用工作流；工作流使用自带的 `GITHUB_TOKEN` 发布 GHCR，无需单独添加发布密码。

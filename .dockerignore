@@ -1,0 +1,11 @@
+.git
+.github
+.idea
+bin
+ZBProxy.json
+ZBProxy.whitelist.json
+*.log
+.env
+.env.*
+!.env.example
+data
