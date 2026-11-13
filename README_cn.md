@@ -116,9 +116,9 @@ ZBPROXY_ADMIN_PASSWORD='替换为自己的密码' ./zbproxy -web 0.0.0.0:8080
 
 ## Docker / GHCR 镜像
 
-如需为现有 Minecraft 代理增加 Trojan/TLS 加密入口，参见 [域名证书、服务端和电脑端部署步骤](deploy/trojan/README.md)。该入口保留现有网页和白名单，不能保证修复线路丢包。
+支持通过 `Services[].Encryption.Enabled` 开关内置 Trojan/TLS 加密，详见 [JSON 配置与同镜像客户端](deploy/ENCRYPTION.md)。需要 Chrome uTLS 和网站回落时，也可使用 [外置 sing-box 部署](deploy/trojan/README.md)。加密不能保证修复线路丢包。
 
-仓库的 `Docker image` 工作流会在推送 `dev-next`、推送 `v*` 标签或手动运行时，测试代码并构建 `linux/amd64` 和 `linux/arm64` 镜像。拉取请求只验证构建，不发布。镜像地址为 `ghcr.io/sohugepenguin/zbproxy`，包含 `latest`、分支名、完整提交 SHA 和版本标签。
+仓库的 `Docker image` 工作流会在推送 `master`、`dev-next`、推送 `v*` 标签或手动运行时，测试代码并构建 `linux/amd64` 和 `linux/arm64` 镜像。拉取请求只验证构建，不发布。镜像地址为 `ghcr.io/sohugepenguin/zbproxy`，包含分支名、完整提交 SHA 和版本标签；`latest` 由 `master` 更新。
 
 镜像从本次仓库源码编译，使用精简的非 root 运行环境，不包含本地密码、名单、Git 元数据或预编译文件。容器内游戏端口为 `25565`，网页端口为 `8080`，配置和白名单均保存在 `/data`。
 

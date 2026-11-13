@@ -17,6 +17,7 @@ import (
 	"github.com/layou233/zbproxy/v3/common/set"
 	"github.com/layou233/zbproxy/v3/config"
 	"github.com/layou233/zbproxy/v3/protocol/minecraft"
+	"github.com/layou233/zbproxy/v3/transport"
 
 	"github.com/phuslu/log"
 )
@@ -30,6 +31,7 @@ type Service struct {
 	legacyOutbound adapter.Outbound
 	listenAddress  string
 	ipAccessLists  []set.StringSet
+	encryption     *transport.Server
 
 	// TODO: udp service
 }
@@ -52,6 +54,7 @@ func (s *Service) listenLoop() {
 			return
 		}
 		go func() {
+			var err error
 			tcpAddress := conn.RemoteAddr().(*net.TCPAddr)
 			ipString := tcpAddress.IP.String()
 			if s.ipAccessLists != nil &&
@@ -81,6 +84,14 @@ func (s *Service) listenLoop() {
 				}
 				if changed {
 					ipString = metadata.SourceAddress.Addr().String()
+				}
+			}
+			if s.encryption != nil {
+				netConn, err = s.encryption.Accept(s.ctx, netConn)
+				if err != nil {
+					conn.Close()
+					s.logger.Debug().Str("service", s.config.Name).Str("ip", ipString).Err(err).Msg("Encrypted inbound rejected")
+					return
 				}
 			}
 			s.logger.Info().Str("id", metadata.ConnectionID).Str("service", s.config.Name).
@@ -114,6 +125,10 @@ func (s *Service) listenLoop() {
 
 func (s *Service) Start(ctx context.Context) error {
 	var err error
+	s.encryption, err = transport.NewServer(s.config.Encryption)
+	if err != nil {
+		return err
+	}
 	// handle legacy modes
 	if s.config.Minecraft != nil && s.config.TLSSniffing != nil {
 		return errors.New("Minecraft and TLSSniffing are mutually exclusive in legacy mode")
@@ -158,15 +173,23 @@ func (s *Service) Start(ctx context.Context) error {
 	}
 	s.tcpListener = listener.(*net.TCPListener)
 	s.ctx = ctx
-	s.logger.Info().Str("service", s.config.Name).Msg("Listening on " + s.listenAddress)
+	s.logger.Info().Str("service", s.config.Name).Bool("encrypted", s.encryption != nil).Msg("Listening on " + s.listenAddress)
 
-	go s.listenLoop()
+	// Connections keep the configuration and certificate snapshot they accepted
+	// under, even while the original Service is reloaded.
+	running := *s
+	go running.listenLoop()
 	return nil
 }
 
 func (s *Service) Reload(ctx context.Context, newConfig *config.Service) error {
 	if s.tcpListener == nil {
 		return os.ErrClosed
+	}
+	// Validate before closing the working listener; invalid TLS settings must
+	// never silently downgrade an encrypted service to plaintext.
+	if _, err := transport.NewServer(newConfig.Encryption); err != nil {
+		return err
 	}
 	s.Close()
 	s.listenAddress = net.JoinHostPort(newConfig.Bind, strconv.Itoa(int(newConfig.Listen)))

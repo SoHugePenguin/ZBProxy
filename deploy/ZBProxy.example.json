@@ -14,7 +14,13 @@
         {
             "Name": "Hypixel-in",
             "Bind": "0.0.0.0",
-            "Listen": 25565
+            "Listen": 25565,
+            "Encryption": {
+                "Enabled": false,
+                "CertFile": "/certs/live/game.example.com/fullchain.pem",
+                "KeyFile": "/certs/live/game.example.com/privkey.pem",
+                "Password": ""
+            }
         }
     ],
     "Router": {

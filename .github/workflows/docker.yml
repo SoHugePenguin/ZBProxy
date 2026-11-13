@@ -2,10 +2,10 @@ name: Docker image
 
 on:
   push:
-    branches: [dev-next]
+    branches: [master, dev-next]
     tags: ["v*"]
   pull_request:
-    branches: [dev-next]
+    branches: [master, dev-next]
   workflow_dispatch:
 
 permissions:
@@ -57,7 +57,7 @@ jobs:
         with:
           images: ${{ steps.image.outputs.name }}
           tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/master' }}
             type=ref,event=branch
             type=ref,event=pr
             type=semver,pattern={{version}}

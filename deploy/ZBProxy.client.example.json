@@ -1,0 +1,11 @@
+{
+    "EncryptionClient": {
+        "Enabled": true,
+        "Bind": "127.0.0.1",
+        "Listen": 25565,
+        "ServerAddress": "64.83.0.57",
+        "ServerPort": 443,
+        "ServerName": "game.example.com",
+        "Password": "REPLACE_WITH_SERVER_ENCRYPTION_PASSWORD"
+    }
+}

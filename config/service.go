@@ -8,6 +8,7 @@ type Service struct {
 	TargetAddress string `json:",omitempty"`
 	TargetPort    uint16 `json:",omitempty"`
 	Listen        uint16
+	Encryption    *Encryption `json:",omitempty"`
 
 	EnableProxyProtocol bool                          `json:",omitempty"`
 	IPAccess            access                        `json:",omitempty"`

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -19,6 +20,7 @@ import (
 	"github.com/layou233/zbproxy/v3/common/console"
 	"github.com/layou233/zbproxy/v3/common/console/color"
 	"github.com/layou233/zbproxy/v3/config"
+	"github.com/layou233/zbproxy/v3/transport"
 	"github.com/layou233/zbproxy/v3/version"
 	"github.com/phuslu/log"
 )
@@ -27,7 +29,15 @@ func main() {
 	configPath := flag.String("config", "ZBProxy.json", "Proxy configuration file")
 	webAddress := flag.String("web", "", "Override Web.Bind/Port in config; empty disables the web UI")
 	whitelistPath := flag.String("whitelist", "ZBProxy.whitelist.json", "Managed player whitelist file")
+	clientMode := flag.Bool("client", false, "Run local encrypted Minecraft client using EncryptionClient in config")
 	flag.Parse()
+	if *clientMode {
+		if err := runEncryptedClient(*configPath); err != nil {
+			fmt.Fprintln(os.Stderr, "Encrypted client:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	console.SetTitle(fmt.Sprintf("ZBProxy %v | Running...", version.Version))
 	fmt.Println(color.Apply(color.FgHiRed, ` ______  _____   _____   _____    _____  __    __ __    __
 |___  / |  _  \ |  _  \ |  _  \  /  _  \ \ \  / / \ \  / /
@@ -126,6 +136,21 @@ func main() {
 			}
 		}
 	}
+}
+
+func runEncryptedClient(path string) error {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var settings struct{ EncryptionClient config.EncryptionClient }
+	if err := json.Unmarshal(content, &settings); err != nil {
+		return err
+	}
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	logger := &log.Logger{Level: log.InfoLevel, TimeFormat: "15:04:05", Writer: &log.ConsoleWriter{ColorOutput: true, EndWithMessage: true}}
+	return transport.RunClient(ctx, settings.EncryptionClient, logger)
 }
 
 func webListenAddress(settings config.Web, override string, explicit bool) string {

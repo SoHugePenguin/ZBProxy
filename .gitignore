@@ -2,6 +2,7 @@
 /bin/
 /ZBProxy.json
 /ZBProxy.whitelist.json
+/ZBProxy.client.json
 /.env
 /data/
 /deploy/trojan/.env
