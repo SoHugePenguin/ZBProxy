@@ -9,3 +9,8 @@ ZBProxy.whitelist.json
 .env.*
 !.env.example
 data
+deploy/trojan/runtime
+deploy/trojan/certs
+deploy/trojan/acme-work
+deploy/trojan/.env
+deploy/trojan/__pycache__

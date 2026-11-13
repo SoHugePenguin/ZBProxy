@@ -1,0 +1,41 @@
+name: zbproxy-tls
+
+services:
+  tunnel:
+    image: ghcr.io/sagernet/sing-box:v1.14.4
+    restart: unless-stopped
+    network_mode: host
+    command: ["-c", "/etc/sing-box/server.json", "run"]
+    volumes:
+      - ./runtime:/etc/sing-box:ro
+      - ./certs:/certs:ro
+    depends_on:
+      - website
+
+  website:
+    image: nginx:alpine
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:18088:8080"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./site:/usr/share/nginx/html:ro
+
+  certbot:
+    image: certbot/certbot:latest
+    profiles: [certificate]
+    ports:
+      - "80:80"
+    volumes:
+      - ./certs:/etc/letsencrypt
+      - ./acme-work:/var/lib/letsencrypt
+    command:
+      - certonly
+      - --standalone
+      - --non-interactive
+      - --agree-tos
+      - --keep-until-expiring
+      - --email
+      - ${ACME_EMAIL:?Run prepare.py first}
+      - --domain
+      - ${TUNNEL_DOMAIN:?Run prepare.py first}
