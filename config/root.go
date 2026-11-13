@@ -17,6 +17,7 @@ import (
 
 type _Root struct {
 	Log       Log
+	Web       Web
 	Services  []*Service
 	Router    Router
 	Outbounds []*Outbound
@@ -25,6 +26,7 @@ type _Root struct {
 
 type Root struct {
 	Log       Log
+	Web       Web
 	Services  []*Service
 	Router    Router
 	Outbounds []*Outbound
@@ -104,6 +106,7 @@ func (r *Root) reloadEventLoop() {
 		}
 
 		r.Log = rawConfig.Log
+		r.Web = rawConfig.Web
 		r.Services = rawConfig.Services
 		r.Router = rawConfig.Router
 		r.Outbounds = rawConfig.Outbounds
@@ -117,6 +120,7 @@ func (r *Root) reloadEventLoop() {
 }
 
 func loadContent(root *_Root, filePath string) error {
+	root.Web = DefaultWeb()
 	fileContent, err := os.ReadFile(filePath)
 	if err != nil {
 		return err
@@ -135,12 +139,14 @@ func LoadConfigFromFile(ctx context.Context, filePath string, watch bool, logger
 		if errors.Is(err, os.ErrNotExist) {
 			logger.Warn().Msg("Config file does not exist, generating a new one...")
 			rawConfig = _Root{
+				Web: DefaultWeb(),
 				Log: Log{
 					Level: log.DebugLevel,
 				},
 				Services: []*Service{
 					{
 						Name:   "Hypixel-in",
+						Bind:   "0.0.0.0",
 						Listen: 25565,
 					},
 				},
@@ -182,10 +188,11 @@ func LoadConfigFromFile(ctx context.Context, filePath string, watch bool, logger
 				Lists: map[string]set.StringSet{},
 			}
 			var file *os.File
-			file, err = os.Create("ZBProxy.json")
+			file, err = os.Create(filePath)
 			if err != nil {
 				return nil, common.Cause("create config file: ", err)
 			}
+			defer file.Close()
 			encoder := json.NewEncoder(file)
 			encoder.SetEscapeHTML(false)
 			encoder.SetIndent("", "    ")
@@ -199,6 +206,7 @@ func LoadConfigFromFile(ctx context.Context, filePath string, watch bool, logger
 	}
 	root := &Root{
 		Log:       rawConfig.Log,
+		Web:       rawConfig.Web,
 		Services:  rawConfig.Services,
 		Router:    rawConfig.Router,
 		Outbounds: rawConfig.Outbounds,

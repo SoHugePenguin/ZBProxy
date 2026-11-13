@@ -38,7 +38,7 @@ var _ adapter.Service = (*Service)(nil)
 
 func NewService(logger *log.Logger, newConfig *config.Service) *Service {
 	return &Service{
-		listenAddress: ":" + strconv.Itoa(int(newConfig.Listen)),
+		listenAddress: net.JoinHostPort(newConfig.Bind, strconv.Itoa(int(newConfig.Listen))),
 		logger:        logger,
 		config:        newConfig,
 	}
@@ -92,8 +92,8 @@ func (s *Service) listenLoop() {
 				switch outbound := s.legacyOutbound.(type) {
 				case *minecraft.Outbound:
 					bufConn = bufio.NewCachedConn(netConn)
+					defer bufConn.Release()
 					err = minecraft.SniffClientHandshake(bufConn, metadata)
-					bufConn.Release()
 					if err != nil {
 						s.logger.Warn().Str("id", metadata.ConnectionID).Str("service", s.config.Name).
 							Str("ip", ipString).Err(err).Msg("Error when reading Minecraft handshake")
@@ -169,7 +169,7 @@ func (s *Service) Reload(ctx context.Context, newConfig *config.Service) error {
 		return os.ErrClosed
 	}
 	s.Close()
-	s.listenAddress = ":" + strconv.Itoa(int(newConfig.Listen))
+	s.listenAddress = net.JoinHostPort(newConfig.Bind, strconv.Itoa(int(newConfig.Listen)))
 	s.config = newConfig
 	s.legacyOutbound = nil
 	s.ipAccessLists = nil

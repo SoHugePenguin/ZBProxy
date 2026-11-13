@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/layou233/zbproxy/v3/adapter"
 	"github.com/layou233/zbproxy/v3/common"
@@ -42,6 +43,7 @@ type Outbound struct {
 	hostnameAccessLists []set.StringSet
 	nameAccessLists     []set.StringSet
 	onlineCount         atomic.Int32
+	motdCache           atomic.Pointer[cachedMOTD]
 }
 
 var (
@@ -70,6 +72,7 @@ func (o *Outbound) Name() (name string) {
 }
 
 func (o *Outbound) PostInitialize(router adapter.Router, provider adapter.RouteResourceProvider) error {
+	o.motdCache.Store(nil)
 	var err error
 	if o.config.Minecraft.HostnameAccess.Mode != access.DefaultMode {
 		o.hostnameAccessLists, err = provider.FindListsByTag(o.config.Minecraft.HostnameAccess.ListTags)
@@ -311,7 +314,7 @@ func (o *Outbound) InjectConnection(ctx context.Context, conn *bufio.CachedConn,
 			o.access.RUnlock()
 			return bufio.CopyConn(remoteConn, conn)
 		} else {
-			motd := generateMOTD(metadata.Minecraft.ProtocolVersion, o.config, &o.onlineCount)
+			motd := o.motdForProtocol(metadata.Minecraft.ProtocolVersion)
 			buffer := buf.New()
 			buffer.Reset(mcprotocol.MaxVarIntLen)
 			buffer.WriteByte(0) // Client bound : Status Response
@@ -362,6 +365,16 @@ func (o *Outbound) InjectConnection(ctx context.Context, conn *bufio.CachedConn,
 	case mcprotocol.IntentLogin:
 		buffer := buf.New()
 		buffer.Reset(mcprotocol.MaxVarIntLen)
+		if playerAccess, ok := o.router.(interface{ AllowPlayer(string) bool }); ok && !playerAccess.AllowPlayer(metadata.Minecraft.PlayerName) {
+			message := []byte(`{"text":"You are not on the proxy whitelist. Please contact the administrator.","color":"red"}`)
+			buffer.WriteByte(0)
+			mcprotocol.VarInt(len(message)).WriteToBuffer(buffer)
+			conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+			err := (mcprotocol.Conn{Writer: common.UnwrapWriter(conn)}).WriteVectorizedPacket(buffer, message)
+			buffer.Release()
+			o.access.RUnlock()
+			return err
+		}
 		if o.config.Minecraft.NameAccess.Mode != access.DefaultMode {
 			name := metadata.Minecraft.PlayerName
 			if o.config.Minecraft.NameAccess.LowerCase {

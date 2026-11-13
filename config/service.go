@@ -4,6 +4,7 @@ import "github.com/layou233/zbproxy/v3/common/network"
 
 type Service struct {
 	Name          string
+	Bind          string `json:",omitempty"`
 	TargetAddress string `json:",omitempty"`
 	TargetPort    uint16 `json:",omitempty"`
 	Listen        uint16

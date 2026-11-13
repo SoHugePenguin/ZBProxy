@@ -22,6 +22,7 @@ type Options struct {
 	RuleRegistry    map[string]route.CustomRuleInitializer
 	SnifferRegistry map[string]protocol.SnifferFunc
 	DisableReload   bool
+	PlayerAccess    func(string) bool
 }
 
 type Instance struct {
@@ -33,6 +34,7 @@ type Instance struct {
 	outboundMap     map[string]adapter.Outbound
 	ruleRegistry    map[string]route.CustomRuleInitializer
 	snifferRegistry map[string]protocol.SnifferFunc
+	playerAccess    func(string) bool
 }
 
 func NewInstance(ctx context.Context, options Options) (*Instance, error) {
@@ -45,6 +47,7 @@ func NewInstance(ctx context.Context, options Options) (*Instance, error) {
 		config:          options.Config,
 		ruleRegistry:    options.RuleRegistry,
 		snifferRegistry: options.SnifferRegistry,
+		playerAccess:    options.PlayerAccess,
 	}
 	if options.LogWriter == nil {
 		instance.logger.Writer = &log.ConsoleWriter{
@@ -107,6 +110,7 @@ func (i *Instance) Start() error {
 		ListMap:         i.config.Lists,
 		RuleRegistry:    i.ruleRegistry,
 		SnifferRegistry: i.snifferRegistry,
+		PlayerAccess:    i.playerAccess,
 	})
 	if err != nil {
 		return common.Cause("initialize router: ", err)
@@ -170,6 +174,7 @@ func (i *Instance) UpdateConfig() {
 		ListMap:         i.config.Lists,
 		RuleRegistry:    i.ruleRegistry,
 		SnifferRegistry: i.snifferRegistry,
+		PlayerAccess:    i.playerAccess,
 	})
 	if err != nil {
 		i.logger.Error().Err(err).Msg("Error when updating router")

@@ -24,6 +24,7 @@ type RouterOptions struct {
 	ListMap         map[string]set.StringSet
 	RuleRegistry    map[string]CustomRuleInitializer
 	SnifferRegistry map[string]protocol.SnifferFunc
+	PlayerAccess    func(string) bool
 }
 
 type Router struct {
@@ -37,6 +38,7 @@ type Router struct {
 	rules           []Rule
 	defaultOutbound adapter.Outbound
 	started         bool
+	playerAccess    func(string) bool
 }
 
 var _ adapter.Router = (*Router)(nil)
@@ -71,6 +73,7 @@ func (r *Router) Initialize(ctx context.Context, logger *log.Logger, options Rou
 	r.listMap = options.ListMap
 	r.ruleRegistry = options.RuleRegistry
 	r.snifferRegistry = options.SnifferRegistry
+	r.playerAccess = options.PlayerAccess
 	r.rules = rules
 	r.started = true
 	return nil
@@ -78,16 +81,22 @@ func (r *Router) Initialize(ctx context.Context, logger *log.Logger, options Rou
 
 func (r *Router) HandleConnection(conn net.Conn, metadata *adapter.Metadata) {
 	r.access.RLock()
-	cachedConn := bufio.NewCachedConn(conn)
+	routeLogger := r.logger
+	ctx := r.ctx
 	outbound := r.defaultOutbound
-	for i, rule := range r.rules {
+	rules := r.rules
+	outboundMap := r.outboundMap
+	snifferRegistry := r.snifferRegistry
+	r.access.RUnlock()
+	cachedConn := bufio.NewCachedConn(conn)
+	for i, rule := range rules {
 		match := rule.Match(metadata)
 		if match {
-			r.logger.Trace().Str("id", metadata.ConnectionID).Int("rule_index", i).Msg("Rule matched")
+			routeLogger.Trace().Str("id", metadata.ConnectionID).Int("rule_index", i).Msg("Rule matched")
 			ruleConfig := rule.Config()
 			// handle sniff
 			if len(ruleConfig.Sniff) > 0 {
-				protocol.Sniff(r.logger, cachedConn, metadata, r.snifferRegistry, ruleConfig.Sniff...)
+				protocol.Sniff(routeLogger, cachedConn, metadata, snifferRegistry, ruleConfig.Sniff...)
 			}
 			// handle rewrite
 			if ruleConfig.Rewrite.TargetAddress != "" {
@@ -98,7 +107,7 @@ func (r *Router) HandleConnection(conn net.Conn, metadata *adapter.Metadata) {
 			}
 			if ruleConfig.Rewrite.Minecraft != nil {
 				if metadata.Minecraft == nil {
-					r.logger.Debug().Str("id", metadata.ConnectionID).Int("rule_index", i).Msg("No Minecraft metadata, skipped rewrite")
+					routeLogger.Debug().Str("id", metadata.ConnectionID).Int("rule_index", i).Msg("No Minecraft metadata, skipped rewrite")
 				} else {
 					if ruleConfig.Rewrite.Minecraft.Hostname != "" {
 						metadata.Minecraft.RewrittenDestination = ruleConfig.Rewrite.Minecraft.Hostname
@@ -114,12 +123,11 @@ func (r *Router) HandleConnection(conn net.Conn, metadata *adapter.Metadata) {
 			// handle outbound
 			if ruleConfig.Outbound != "" {
 				var err error
-				outbound, err = r.FindOutboundByName(ruleConfig.Outbound)
+				outbound, err = r.findOutboundByName(outboundMap, ruleConfig.Outbound)
 				if err != nil {
-					r.logger.Error().Str("id", metadata.ConnectionID).Int("rule_index", i).
+					routeLogger.Error().Str("id", metadata.ConnectionID).Int("rule_index", i).
 						Err(err).Msg("Failed to find outbound")
 					conn.Close()
-					r.access.RUnlock()
 					return
 				}
 				break
@@ -128,13 +136,12 @@ func (r *Router) HandleConnection(conn net.Conn, metadata *adapter.Metadata) {
 	}
 
 	if injectOutbound, isInject := outbound.(adapter.InjectOutbound); isInject {
-		r.access.RUnlock()
-		err := injectOutbound.InjectConnection(r.ctx, cachedConn, metadata)
+		err := injectOutbound.InjectConnection(ctx, cachedConn, metadata)
 		var logger *log.Entry
 		if err == nil {
-			logger = r.logger.Info()
+			logger = routeLogger.Info()
 		} else {
-			logger = r.logger.Warn()
+			logger = routeLogger.Warn()
 		}
 		logger = logger.Str("id", metadata.ConnectionID).Str("outbound", outbound.Name())
 		if err != nil {
@@ -144,20 +151,21 @@ func (r *Router) HandleConnection(conn net.Conn, metadata *adapter.Metadata) {
 		cachedConn.Close()
 		return
 	} else if metadata.DestinationHostname != "" && metadata.DestinationPort > 0 {
-		destinationConn, err := adapter.DialContextWithMetadata(outbound, r.ctx, "tcp",
+		destinationConn, err := adapter.DialContextWithMetadata(outbound, ctx, "tcp",
 			net.JoinHostPort(metadata.DestinationHostname, strconv.FormatUint(uint64(metadata.DestinationPort), 10)),
 			metadata)
 		if err != nil {
-			r.logger.Warn().Str("id", metadata.ConnectionID).Str("outbound", outbound.Name()).
+			routeLogger.Warn().Str("id", metadata.ConnectionID).Str("outbound", outbound.Name()).
 				Err(err).Msg("Failed to dial outbound connection")
+			cachedConn.Close()
+			return
 		}
-		r.access.RUnlock()
 		err = bufio.CopyConn(destinationConn, cachedConn)
 		var logger *log.Entry
 		if err == nil {
-			logger = r.logger.Info()
+			logger = routeLogger.Info()
 		} else {
-			logger = r.logger.Warn()
+			logger = routeLogger.Warn()
 		}
 		logger = logger.Str("id", metadata.ConnectionID).Str("outbound", outbound.Name())
 		if err != nil {
@@ -167,13 +175,20 @@ func (r *Router) HandleConnection(conn net.Conn, metadata *adapter.Metadata) {
 		cachedConn.Close()
 		return
 	}
-	r.logger.Info().Str("id", metadata.ConnectionID).Msg("Closed leaked connection")
+	routeLogger.Info().Str("id", metadata.ConnectionID).Msg("Closed leaked connection")
 	cachedConn.Close()
-	r.access.RUnlock()
 }
 
 func (r *Router) FindOutboundByName(name string) (adapter.Outbound, error) {
 	return r.findOutboundByName(r.outboundMap, name)
+}
+
+// AllowPlayer is checked only at Minecraft login, never on the relay data path.
+func (r *Router) AllowPlayer(name string) bool {
+	r.access.RLock()
+	check := r.playerAccess
+	r.access.RUnlock()
+	return check == nil || check(name)
 }
 
 func (r *Router) findOutboundByName(outboundMap map[string]adapter.Outbound, name string) (adapter.Outbound, error) {

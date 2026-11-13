@@ -29,6 +29,30 @@ type playerSample struct {
 	ID   string `json:"id"`
 }
 
+type cachedMOTD struct {
+	protocol uint
+	online   int32
+	content  []byte
+}
+
+// The caller holds o.access.RLock, so configuration reload cannot interleave
+// with cache generation. Keep one entry to bound memory for arbitrary versions.
+func (o *Outbound) motdForProtocol(protocol uint) []byte {
+	online := o.config.Minecraft.OnlineCount.Online
+	if online < 0 {
+		online = o.onlineCount.Load()
+	}
+	if cached := o.motdCache.Load(); cached != nil && cached.protocol == protocol && cached.online == online {
+		return cached.content
+	}
+	// Use the same online count for the cache key and serialized response.
+	var count atomic.Int32
+	count.Store(online)
+	content := generateMOTD(protocol, o.config, &count)
+	o.motdCache.Store(&cachedMOTD{protocol: protocol, online: online, content: content})
+	return content
+}
+
 func generateMOTD(protocolVersion uint, s *config.Outbound, onlineCount *atomic.Int32) []byte {
 	online := s.Minecraft.OnlineCount.Online
 	if online < 0 {

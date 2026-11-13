@@ -58,3 +58,58 @@ https://launium.com/doc/ZBProxy
 
 ## 许可证
 [![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Flayou233%2FZBProxy.svg?type=large)](https://app.fossa.com/projects/git%2Bgithub.com%2Flayou233%2FZBProxy?ref=badge_large)
+## 自用白名单管理页
+
+管理页使用 Go 标准库和内嵌的原生 HTML/CSS/JavaScript，随代理一起运行；无需 Node.js、数据库或外部静态资源。页面不轮询，名单仅在登录时检查，不参与游戏数据转发。
+
+```bash
+go run ./cmd/zbproxy
+```
+
+启动后访问 **http://127.0.0.1:8080**。也可编译成单个可执行文件：
+
+```bash
+go build -trimpath -ldflags="-s -w" -o zbproxy ./cmd/zbproxy
+./zbproxy
+```
+
+页面支持批量添加、搜索、分页、删除和启用/关闭保护。名单人数没有配额限制；每页显示 50 人，单次 API 请求最多 1 MB，大名单可以分批添加。玩家名按大小写不敏感匹配。
+
+首次启动白名单保护默认关闭。先添加玩家，再在页面启用；启用后空名单会拒绝所有新登录。修改立即生效，已连接的玩家不会被踢出。名单在修改成功后原子保存到 `ZBProxy.whitelist.json`，重启会恢复。此文件独立于 `ZBProxy.json`，修改名单不会重载代理或重建监听端口。运行中请通过页面修改名单；手工修改名单文件需重启才会读取。
+
+管理的玩家名限制适用于 **Minecraft 出站和旧版 Minecraft 入口**，与原有 `NameAccess` 等配置共同生效。纯 TCP 转发无法识别玩家名，不应用此限制。这里只检查客户端提交的玩家名，正版身份仍由目标服务器验证。
+
+网页与游戏入口均在 `ZBProxy.json` 配置绑定地址和端口：
+
+```json
+{
+    "Web": { "Enabled": true, "Bind": "127.0.0.1", "Port": 8080 },
+    "Services": [
+        { "Name": "Hypixel-in", "Bind": "0.0.0.0", "Listen": 25565 }
+    ]
+}
+```
+
+以上是配置片段，保留原有 Router、Outbounds 等字段。`127.0.0.1` 仅本机可连接，`0.0.0.0` 监听所有 IPv4 网卡，`::` 监听 IPv6。游戏入口未填写 Bind 时保留原来的通配监听行为。网页配置未填写时默认监听 `127.0.0.1:8080`；`Web.Enabled: false` 关闭网页，但仍检查已有白名单。网页配置在启动时读取，修改后需重启程序。
+
+常用参数：
+
+| 参数 | 默认值 | 用途 |
+| --- | --- | --- |
+| `-web` | 读取 `Web.Bind` / `Web.Port` | 显式传入时临时覆盖文件配置；传 `-web ""` 关闭页面，名单检查仍有效 |
+| `-config` | `ZBProxy.json` | 代理配置文件路径 |
+| `-whitelist` | `ZBProxy.whitelist.json` | 管理页白名单文件路径 |
+
+默认仅本机访问，可通过 SSH 隧道从自己的电脑打开：
+
+```bash
+ssh -L 8080:127.0.0.1:8080 user@your-server
+```
+
+如果需要监听其他地址，在 `ZBProxy.json` 的 `Web.Password` 中填写管理密码；登录用户名在 `Web.Username` 中设置，未填写时默认为 `admin`。也可使用环境变量 `ZBPROXY_ADMIN_PASSWORD`，非空环境变量优先于配置文件。用户名和密码配置修改后重启生效。HTTP Basic 登录本身不加密，远程访问请使用 SSH 隧道或 HTTPS 反向代理。
+
+```bash
+ZBPROXY_ADMIN_PASSWORD='替换为自己的密码' ./zbproxy -web 0.0.0.0:8080
+```
+
+网站日志直接输出到终端：启动/停止信息始终显示；访问日志默认启用，包含请求方法、路径、状态码、来源地址和耗时。网站日志独立于代理的 `Log.Level`，因此代理设为 `warn` 时也能看到网站正常访问。将 `Web.AccessLog` 设为 `false` 可关闭逐请求日志，减少终端输出；修改后重启生效。

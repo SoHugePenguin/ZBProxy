@@ -41,10 +41,18 @@ func CopyBuffer(destination io.Writer, source io.Reader, buffer *buf.Buffer) (wr
 				cachedConn.Release()
 				continue
 			}
-			written, err = cachedConn.cache.WriteTo(destination)
+			n, writeErr := cachedConn.cache.WriteTo(destination)
+			written += n
+			cachedConn.cache.Advance(int(n))
+			err = writeErr
 			if err != nil {
 				return
 			}
+			if !cachedConn.cache.IsEmpty() {
+				return written, io.ErrShortWrite
+			}
+			source = cachedConn.Conn
+			cachedConn.Release()
 			continue
 		}
 		break
