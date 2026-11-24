@@ -221,6 +221,14 @@ func validateNetwork(c *config.Root) error {
 		outbounds[out.Name] = out
 	}
 	hasOutbound := func(name string) bool { return name == "RESET" || name == "REJECT" || outbounds[name] != nil }
+	if c.Router.DefaultOutbound != "" && !hasOutbound(c.Router.DefaultOutbound) {
+		return errors.New("全局默认出口不存在，请先调整原有路由")
+	}
+	for i, rule := range c.Router.Rules {
+		if rule.Outbound != "" && !hasOutbound(rule.Outbound) {
+			return fmt.Errorf("原有路由规则 %d 引用了不存在的出口：%s", i+1, rule.Outbound)
+		}
+	}
 	for _, out := range c.Outbounds {
 		seen := map[string]bool{out.Name: true}
 		for name := out.Dialer; name != ""; {
@@ -249,7 +257,7 @@ func validateNetwork(c *config.Root) error {
 		if addresses[address] {
 			return fmt.Errorf("监听地址重复：%s", address)
 		}
-		if in.DefaultOutbound == "" || !hasOutbound(in.DefaultOutbound) {
+		if in.DefaultOutbound != "" && !hasOutbound(in.DefaultOutbound) {
 			return fmt.Errorf("入口 %s：请选择有效的默认出口", in.Name)
 		}
 		if in.Minecraft != nil || in.TLSSniffing != nil {

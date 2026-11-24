@@ -105,6 +105,64 @@ func TestNetworkRejectsDanglingRoutesAndFailedApply(t *testing.T) {
 	}
 }
 
+func TestNetworkSaveWithLegacyRouting(t *testing.T) {
+	for _, mode := range []string{"global", "service-list", "conditional"} {
+		t.Run(mode, func(t *testing.T) {
+			m, _, path := networkFixture(t)
+			root := cloneRoot(m.current)
+			root.Services[0].DefaultOutbound = ""
+			switch mode {
+			case "global":
+				root.Router.DefaultOutbound = "us"
+			case "service-list":
+				root.Router.Rules = []*config.Rule{{Type: config.RuleTypeServiceName, Parameter: json.RawMessage(`["game"]`), Outbound: "us"}}
+			case "conditional":
+				root.Router.Rules = []*config.Rule{{Type: config.RuleTypeServiceName, Parameter: json.RawMessage(`"other"`), Invert: true, Outbound: "us"}}
+			}
+			data, err := json.Marshal(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, data, 0600); err != nil {
+				t.Fatal(err)
+			}
+			m, err = OpenNetworkManager(path, root, &fakeRuntime{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			state := m.Snapshot()
+			if state.Services[0].DefaultOutbound != "" {
+				t.Fatal("legacy routing unexpectedly replaced")
+			}
+			state.Outbounds = append(state.Outbounds, &config.Outbound{Name: "new", TargetAddress: "mc.example", TargetPort: 25565, Minecraft: &config.MinecraftService{}})
+			if err := m.Save(state); err != nil {
+				t.Fatalf("adding an outbound with legacy routing: %v", err)
+			}
+			data, err = os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var saved struct {
+				Services []*config.Service
+				Router   config.Router
+			}
+			if err := json.Unmarshal(data, &saved); err != nil {
+				t.Fatal(err)
+			}
+			want, _ := json.Marshal(root.Router)
+			got, _ := json.Marshal(saved.Router)
+			if !bytes.Equal(got, want) || saved.Services[0].DefaultOutbound != "" {
+				t.Fatalf("legacy routing changed: %s -> %s", want, got)
+			}
+			state = m.Snapshot()
+			state.Outbounds = state.Outbounds[1:]
+			if err := m.Save(state); err == nil {
+				t.Fatal("removed an outbound still referenced by legacy routing")
+			}
+		})
+	}
+}
+
 func TestNetworkAPIRequiresAuthenticationAndMutationHeader(t *testing.T) {
 	m, _, _ := networkFixture(t)
 	store, _ := OpenStore(filepath.Join(t.TempDir(), "whitelist.json"))

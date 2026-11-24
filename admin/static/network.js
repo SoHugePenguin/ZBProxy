@@ -36,7 +36,7 @@ function renderNetwork() {
     if (networkView === 'outbounds') {
       const p = item.ProxyOptions || {}, result = probeResults.get(item.Name);
       row.append(cell(item.Name, 'strong'), cell(hostPort(item.TargetAddress || '', item.TargetPort), 'mono'), cell(`${proxyName(p.Type)}${p.Address ? ` · ${p.Address}` : ''}`), cell(p.Username || '无'), cell(runningProbes.has(item.Name) ? '测试中…' : result ? result.AverageLabel : '未测试'));
-    } else if (networkView === 'services') row.append(cell(item.Name, 'strong'), cell(hostPort(item.Bind || '0.0.0.0', item.Listen), 'mono'), cell(item.DefaultOutbound || '原有路由'), cell(item.Encryption?.Enabled ? 'Trojan / TLS' : 'TCP'));
+    } else if (networkView === 'services') row.append(cell(item.Name, 'strong'), cell(hostPort(item.Bind || '0.0.0.0', item.Listen), 'mono'), cell(item.DefaultOutbound || '沿用原有路由'), cell(item.Encryption?.Enabled ? 'Trojan / TLS' : 'TCP'));
     else row.append(cell(item.Value, item.Kind === 'uuid' ? 'mono uuid' : 'strong'), cell(item.Kind === 'uuid' ? 'UUID' : '玩家名'), cell(item.Service || '全部入口'), cell(item.Outbound), cell(item.Enabled ? '已启用' : '已停用', item.Enabled ? 'success-text' : 'muted'));
     const actions = document.createElement('td'); actions.className = 'row-actions';
     if (networkView === 'outbounds') { const b = action('activity', `测试 ${item.Name}`, () => probe(item.Name)); b.disabled = runningProbes.has(item.Name); actions.append(b); }
@@ -92,7 +92,7 @@ function openEditor(kind, index = -1) {
     const item = original || {Bind:'0.0.0.0',Listen:25565}, enc = item.Encryption || {};
     field(parent, '入口名称', 'f-name', 'text', item.Name, {required:true,maxlength:128}); $('f-name').readOnly = !!original;
     const listen = group(parent, '监听'); field(listen, '监听 IP', 'f-bind', 'text', item.Bind || '0.0.0.0', {required:true}); field(listen, '端口', 'f-port', 'number', item.Listen, {required:true,min:1,max:65535});
-    field(parent, '默认出口', 'f-default', 'select', item.DefaultOutbound || choices[0]?.[0], {choices,required:true});
+    field(parent, '默认出口', 'f-default', 'select', original ? (item.DefaultOutbound || '') : choices[0]?.[0], {choices:[['','沿用原有路由'],...choices]});
     const encrypted = field(parent, '启用 Trojan / TLS', 'f-encrypted', 'checkbox', enc.Enabled);
     const tls = group(parent, 'TLS 配置'); field(tls, '证书文件', 'f-cert', 'text', enc.CertFile); field(tls, '私钥文件', 'f-key', 'text', enc.KeyFile); field(tls, networkState.encryption_passwords?.[item.Name] ? '连接密码（已设置，留空保留）' : '连接密码', 'f-tls-password', 'password', '', {autocomplete:'new-password'});
     const update = () => { tls.hidden = !encrypted.checked; $('f-cert').required = $('f-key').required = encrypted.checked; }; encrypted.addEventListener('change', update); update();
