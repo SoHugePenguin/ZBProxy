@@ -40,7 +40,7 @@ type cachedMOTD struct {
 func (o *Outbound) motdForProtocol(protocol uint) []byte {
 	online := o.config.Minecraft.OnlineCount.Online
 	if online < 0 {
-		online = o.onlineCount.Load()
+		online = o.ConnectionCount().Load()
 	}
 	if cached := o.motdCache.Load(); cached != nil && cached.protocol == protocol && cached.online == online {
 		return cached.content

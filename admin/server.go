@@ -31,6 +31,10 @@ type asset struct {
 // NewServer serves a buildless, embedded UI with no polling or background jobs.
 // An empty password is only allowed on a loopback listener.
 func NewServer(address, username, password string, store *Store, accessLogger ...*log.Logger) (*http.Server, error) {
+	return NewManagedServer(address, username, password, store, nil, accessLogger...)
+}
+
+func NewManagedServer(address, username, password string, store *Store, manager *NetworkManager, accessLogger ...*log.Logger) (*http.Server, error) {
 	if username == "" {
 		username = "admin"
 	}
@@ -47,7 +51,7 @@ func NewServer(address, username, password string, store *Store, accessLogger ..
 		return nil, errors.New("非本机管理地址必须设置 ZBProxy.json 的 Web.Password 或环境变量 ZBPROXY_ADMIN_PASSWORD")
 	}
 	static := make(map[string]asset)
-	for _, name := range []string{"index.html", "app.css", "app.js"} {
+	for _, name := range []string{"index.html", "app.css", "app.js", "network.js", "icons.svg"} {
 		body, err := assets.ReadFile("static/" + name)
 		if err != nil {
 			return nil, err
@@ -96,7 +100,11 @@ func NewServer(address, username, password string, store *Store, accessLogger ..
 					return
 				}
 			}
-			serveAPI(w, r, store)
+			if manager != nil && (r.URL.Path == "/api/network" || r.URL.Path == "/api/probe") {
+				manager.ServeHTTP(w, r)
+			} else {
+				serveAPI(w, r, store)
+			}
 			return
 		}
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
@@ -126,7 +134,7 @@ func NewServer(address, username, password string, store *Store, accessLogger ..
 	if len(accessLogger) > 0 && accessLogger[0] != nil {
 		finalHandler = logRequests(handler, accessLogger[0])
 	}
-	return &http.Server{Addr: address, Handler: finalHandler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10}, nil
+	return &http.Server{Addr: address, Handler: finalHandler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10}, nil
 }
 
 type responseStatus struct {

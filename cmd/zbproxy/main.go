@@ -19,6 +19,7 @@ import (
 	"github.com/layou233/zbproxy/v3/common"
 	"github.com/layou233/zbproxy/v3/common/console"
 	"github.com/layou233/zbproxy/v3/common/console/color"
+	"github.com/layou233/zbproxy/v3/common/jsonx"
 	"github.com/layou233/zbproxy/v3/config"
 	"github.com/layou233/zbproxy/v3/transport"
 	"github.com/layou233/zbproxy/v3/version"
@@ -55,7 +56,7 @@ func main() {
 	startupLogger := &log.Logger{Level: log.WarnLevel, TimeFormat: "15:04:05", Writer: &log.ConsoleWriter{ColorOutput: true, EndWithMessage: true}}
 	webLogger := *startupLogger
 	webLogger.Level = log.InfoLevel
-	settings, err := config.LoadConfigFromFile(ctx, *configPath, true, startupLogger)
+	settings, err := config.LoadConfigFromFile(ctx, *configPath, false, startupLogger)
 	if err != nil {
 		panic(err)
 	}
@@ -70,6 +71,14 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+	instance, err := zbproxy.NewInstance(ctx, zbproxy.Options{Config: settings, PlayerAccess: store.AllowPlayer})
+	if err != nil {
+		panic(err)
+	}
+	manager, err := admin.OpenNetworkManager(*configPath, settings, instance)
+	if err != nil {
+		panic(err)
+	}
 	var webServer *http.Server
 	var webListener net.Listener
 	if address != "" {
@@ -81,7 +90,7 @@ func main() {
 		if override := os.Getenv("ZBPROXY_ADMIN_PASSWORD"); override != "" {
 			password = override
 		}
-		webServer, err = admin.NewServer(address, settings.Web.Username, password, store, accessLogger)
+		webServer, err = admin.NewManagedServer(address, settings.Web.Username, password, store, manager, accessLogger)
 		if err != nil {
 			panic(err)
 		}
@@ -91,19 +100,14 @@ func main() {
 		}
 		defer webListener.Close()
 	}
-	instance, err := zbproxy.NewInstance(ctx, zbproxy.Options{
-		Config:       settings,
-		PlayerAccess: store.AllowPlayer,
-	})
-	if err != nil {
-		panic(err)
-	}
-
 	err = instance.Start()
 	if err != nil {
 		panic(err)
 	}
-	settings.SetUpdateHandler(instance.UpdateConfig)
+	defer instance.Close()
+	if err := manager.Watch(ctx, func(err error) { startupLogger.Error().Err(err).Msg("Configuration reload failed") }); err != nil {
+		panic(err)
+	}
 	if webServer != nil {
 		go func() {
 			if err := webServer.Serve(webListener); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -129,7 +133,9 @@ func main() {
 		case s := <-signalChan:
 			switch s {
 			case syscall.SIGHUP:
-				instance.Reload()
+				if err := manager.Reload(ctx); err != nil {
+					startupLogger.Error().Err(err).Msg("Configuration reload failed")
+				}
 			case os.Interrupt, syscall.SIGTERM:
 				cancel()
 				return
@@ -143,14 +149,16 @@ func runEncryptedClient(path string) error {
 	if err != nil {
 		return err
 	}
-	var settings struct{ EncryptionClient config.EncryptionClient }
+	var settings struct {
+		EncryptionClient jsonx.Listable[config.EncryptionClient]
+	}
 	if err := json.Unmarshal(content, &settings); err != nil {
 		return err
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	logger := &log.Logger{Level: log.InfoLevel, TimeFormat: "15:04:05", Writer: &log.ConsoleWriter{ColorOutput: true, EndWithMessage: true}}
-	return transport.RunClient(ctx, settings.EncryptionClient, logger)
+	return transport.RunClients(ctx, settings.EncryptionClient, logger)
 }
 
 func webListenAddress(settings config.Web, override string, explicit bool) string {

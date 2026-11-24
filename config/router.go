@@ -7,8 +7,17 @@ import (
 )
 
 type Router struct {
-	DefaultOutbound string  `json:",omitempty"`
-	Rules           []*Rule `json:",omitempty"`
+	DefaultOutbound string        `json:",omitempty"`
+	Rules           []*Rule       `json:",omitempty"`
+	PlayerRoutes    []PlayerRoute `json:",omitempty"`
+}
+
+type PlayerRoute struct {
+	Enabled  bool
+	Service  string
+	Kind     string
+	Value    string
+	Outbound string
 }
 
 type Rule struct {

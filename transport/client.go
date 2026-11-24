@@ -42,26 +42,82 @@ func clientTLS(settings config.EncryptionClient) (*tls.Config, error) {
 	return tlsConfig, nil
 }
 
-// RunClient exposes only a loopback game port, keeping the rest of the system's
-// networking unchanged. One game connection uses one independent TLS stream.
+// RunClient exposes a game port on the configured IP, defaulting to loopback.
+// One game connection uses one independent TLS stream.
 func RunClient(ctx context.Context, settings config.EncryptionClient, logger *log.Logger) error {
+	return RunClients(ctx, []config.EncryptionClient{settings}, logger)
+}
+
+type encryptedClient struct {
+	settings  config.EncryptionClient
+	tlsConfig *tls.Config
+	listener  net.Listener
+}
+
+// RunClients starts all configured listeners and stops them together on failure
+// or cancellation. Startup failure releases every listener already opened.
+func RunClients(ctx context.Context, settings []config.EncryptionClient, logger *log.Logger) error {
+	if len(settings) == 0 {
+		return errors.New("EncryptionClient requires at least one client")
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	clients := make([]*encryptedClient, 0, len(settings))
+	defer func() {
+		for _, client := range clients {
+			client.listener.Close()
+		}
+	}()
+	for i, entry := range settings {
+		client, err := newEncryptedClient(entry)
+		if err != nil {
+			return fmt.Errorf("EncryptionClient[%d]: %w", i, err)
+		}
+		clients = append(clients, client)
+	}
+	results := make(chan error, len(clients))
+	for i, client := range clients {
+		go func(index int, client *encryptedClient) {
+			err := client.run(ctx, logger)
+			if err != nil {
+				err = fmt.Errorf("EncryptionClient[%d]: %w", index, err)
+			}
+			results <- err
+		}(i, client)
+	}
+	var firstErr error
+	for range clients {
+		if err := <-results; err != nil && firstErr == nil {
+			firstErr = err
+		}
+		cancel()
+	}
+	return firstErr
+}
+
+func newEncryptedClient(settings config.EncryptionClient) (*encryptedClient, error) {
 	tlsConfig, err := clientTLS(settings)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if settings.Bind == "" {
 		settings.Bind = "127.0.0.1"
 	}
-	if ip := net.ParseIP(settings.Bind); ip == nil || !ip.IsLoopback() {
-		return errors.New("EncryptionClient.Bind must be a loopback IP address")
+	if ip := net.ParseIP(settings.Bind); ip == nil {
+		return nil, errors.New("EncryptionClient.Bind must be an IP address")
 	}
 	if settings.Listen == 0 {
 		settings.Listen = 25565
 	}
 	listener, err := net.Listen("tcp", net.JoinHostPort(settings.Bind, strconv.Itoa(int(settings.Listen))))
 	if err != nil {
-		return err
+		return nil, err
 	}
+	return &encryptedClient{settings: settings, tlsConfig: tlsConfig, listener: listener}, nil
+}
+
+func (client *encryptedClient) run(ctx context.Context, logger *log.Logger) error {
+	settings, tlsConfig, listener := client.settings, client.tlsConfig, client.listener
 	defer listener.Close()
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()

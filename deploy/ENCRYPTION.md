@@ -75,6 +75,37 @@ docker run --rm --network host \
 
 随后 MC 连接 **127.0.0.1:25565**。保持客户端运行。配置文件含隧道密码，请限制文件权限并私下传输。客户端校验服务器证书链和 `ServerName`，没有跳过校验的选项；自建 CA 测试可额外配置 `CACertFile`，Docker 使用时还需挂载该文件。客户端配置修改后重启客户端生效。`EncryptionClient.Enabled` 必须为 true，false 会拒绝启动该模式。
 
+需要同时连接多个服务端时，`EncryptionClient` 可以改为数组；原来的单对象写法仍然支持：
+
+```json
+{
+    "EncryptionClient": [
+        {
+            "Enabled": true,
+            "Bind": "127.0.0.1",
+            "Listen": 25565,
+            "ServerAddress": "game.example.com",
+            "ServerPort": 443,
+            "ServerName": "game.example.com",
+            "Password": "第一个服务端的密码"
+        },
+        {
+            "Enabled": true,
+            "Bind": "127.0.0.1",
+            "Listen": 25566,
+            "ServerAddress": "game2.example.com",
+            "ServerPort": 443,
+            "ServerName": "game2.example.com",
+            "Password": "第二个服务端的密码"
+        }
+    ]
+}
+```
+
+MC 分别连接 `127.0.0.1:25565`、`127.0.0.1:25566`。各项的监听地址和端口组合不能冲突，同一个本机 IP 上应使用不同的 `Listen` 端口；省略 `Bind` 默认 `127.0.0.1`，省略 `Listen` 默认 `25565`。数组不能为空，每项的 `Enabled` 都必须为 true。任一项配置无效或监听失败时，会报告数组下标（从 0 开始）并关闭本次启动的所有监听。
+
+`EncryptionClient.Bind` 默认是 `127.0.0.1`，也允许配置其他本机 IP、`0.0.0.0`（所有 IPv4 网卡）或 `::`（IPv6 通配地址）。局域网共享时可设置为 `0.0.0.0`，其他电脑在 MC 中连接这台电脑的局域网 IP 和 `Listen` 端口。该监听端口接收明文 MC 连接，由客户端自动使用配置中的密码连接远端；访问此端口的人无需知道隧道密码。开放监听时，请通过防火墙将访问范围限制为需要共享的设备。
+
 也兼容支持标准 Trojan/TLS TCP 的客户端，例如之前的 sing-box 配置。服务端只支持 CONNECT，不支持 UDP，且忽略客户端请求的目的地址；实际上游仍由已有 ZBProxy 配置决定。客户端不改变系统全局代理，多个游戏连接使用独立 TLS 流。
 
 TLS 会隐藏明文 MC 握手和游戏内容，但内置客户端使用 Go 标准 TLS，不伪装 Chrome 指纹，不提供普通 HTTPS 网站回落，不承诺无法识别。需要 Chrome uTLS 或网站回落时，仍可选择 [外置 sing-box 方案](trojan/README.md)。加密不能修复网络拥塞、物理丢包或不良路由，需用实际游戏操作做对照测试。

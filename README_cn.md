@@ -60,6 +60,8 @@ https://launium.com/doc/ZBProxy
 [![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Flayou233%2FZBProxy.svg?type=large)](https://app.fossa.com/projects/git%2Bgithub.com%2Flayou233%2FZBProxy?ref=badge_large)
 ## 自用白名单管理页
 
+管理页现支持直接配置入口端口、出口代理与认证信息、按玩家名或 UUID 分流，以及单条/批量 TCP 和 Minecraft Ping 测试。操作与生效规则见 [网站配置说明](deploy/CONSOLE.md)。
+
 管理页使用 Go 标准库和内嵌的原生 HTML/CSS/JavaScript，随代理一起运行；无需 Node.js、数据库或外部静态资源。页面不轮询，名单仅在登录时检查，不参与游戏数据转发。
 
 ```bash

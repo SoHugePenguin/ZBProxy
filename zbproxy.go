@@ -3,14 +3,19 @@ package zbproxy
 import (
 	"context"
 	"errors"
+	"fmt"
+	"reflect"
+	"sync"
 	"time"
 
 	"github.com/layou233/zbproxy/v3/adapter"
 	"github.com/layou233/zbproxy/v3/common"
 	"github.com/layou233/zbproxy/v3/config"
 	"github.com/layou233/zbproxy/v3/protocol"
+	"github.com/layou233/zbproxy/v3/protocol/minecraft"
 	"github.com/layou233/zbproxy/v3/route"
 	"github.com/layou233/zbproxy/v3/service"
+	"github.com/layou233/zbproxy/v3/transport"
 
 	"github.com/phuslu/log"
 )
@@ -26,6 +31,8 @@ type Options struct {
 }
 
 type Instance struct {
+	applyMu         sync.Mutex
+	appliedServices []*config.Service
 	ctx             context.Context
 	logger          *log.Logger
 	config          *config.Root
@@ -111,6 +118,8 @@ func (i *Instance) Start() error {
 		RuleRegistry:    i.ruleRegistry,
 		SnifferRegistry: i.snifferRegistry,
 		PlayerAccess:    i.playerAccess,
+		Services:        i.config.Services,
+		Targets:         i.config.Outbounds,
 	})
 	if err != nil {
 		return common.Cause("initialize router: ", err)
@@ -135,6 +144,7 @@ func (i *Instance) Start() error {
 	}
 
 	i.logger.Info().Str("duration", time.Now().Sub(startTime).String()).Msg("ZBProxy started")
+	i.appliedServices = i.config.Services
 	return nil
 }
 
@@ -143,66 +153,126 @@ func (i *Instance) Reload() bool {
 }
 
 func (i *Instance) UpdateConfig() {
-	// update outbounds
-	newOutboundMap := make(map[string]adapter.Outbound, len(i.config.Outbounds))
-	for _, outboundConfig := range i.config.Outbounds {
-		if oldOutbound, ok := i.outboundMap[outboundConfig.Name]; ok {
-			err := oldOutbound.Reload(adapter.OutboundReloadOptions{
-				Router: i.router,
-				Config: outboundConfig,
-				Lists:  i.config.Lists,
-			})
-			if err != nil {
-				i.logger.Error().Str("outbound", outboundConfig.Name).Err(err).Msg("Error when updating outbounds")
-				return
+	if err := i.ApplyConfig(i.config, nil); err != nil {
+		i.logger.Error().Err(err).Msg("Configuration update failed")
+	}
+}
+
+// ApplyConfig prepares a complete routing snapshot before switching new logins.
+// The commit callback persists the file only after all listeners can be opened.
+func (i *Instance) ApplyConfig(next *config.Root, commit func() error) error {
+	i.applyMu.Lock()
+	defer i.applyMu.Unlock()
+	outbounds := make(map[string]adapter.Outbound)
+	for _, c := range next.Outbounds {
+		if c == nil || c.Name == "" {
+			return errors.New("出口名称不能为空")
+		}
+		if _, exists := outbounds[c.Name]; exists {
+			return fmt.Errorf("出口名称重复：%s", c.Name)
+		}
+		out, err := protocol.NewOutbound(i.logger, c)
+		if err != nil {
+			return err
+		}
+		outbounds[c.Name] = out
+		if mc, ok := out.(*minecraft.Outbound); ok {
+			if old, ok := i.outboundMap[c.Name].(*minecraft.Outbound); ok {
+				mc.ShareConnectionCount(old)
 			}
-			newOutboundMap[outboundConfig.Name] = oldOutbound
-		} else {
-			newOutbound, err := protocol.NewOutbound(i.logger, outboundConfig)
-			if err != nil {
-				i.logger.Error().Str("outbound", outboundConfig.Name).Err(err).Msg("Error when initializing outbounds")
-				return
-			}
-			newOutboundMap[outboundConfig.Name] = newOutbound
 		}
 	}
-
-	// update router
-	err := i.router.UpdateConfig(route.RouterOptions{
-		Config:          &i.config.Router,
-		OutboundMap:     newOutboundMap,
-		ListMap:         i.config.Lists,
-		RuleRegistry:    i.ruleRegistry,
-		SnifferRegistry: i.snifferRegistry,
-		PlayerAccess:    i.playerAccess,
-	})
-	if err != nil {
-		i.logger.Error().Err(err).Msg("Error when updating router")
-		return
+	options := route.RouterOptions{Config: &next.Router, OutboundMap: outbounds, ListMap: next.Lists, RuleRegistry: i.ruleRegistry, SnifferRegistry: i.snifferRegistry, PlayerAccess: i.playerAccess, Services: next.Services, Targets: next.Outbounds}
+	prepared := &route.Router{}
+	if err := prepared.Initialize(i.ctx, i.logger, options); err != nil {
+		return err
 	}
-
-	// update services
-	newServiceMap := make(map[string]adapter.Service, len(i.config.Services))
-	for _, serviceConfig := range i.config.Services {
-		if oldService, ok := i.serviceMap[serviceConfig.Name]; ok {
-			err = oldService.Reload(i.ctx, serviceConfig)
-			if err != nil {
-				i.logger.Error().Str("service", serviceConfig.Name).Err(err).Msg("Error when updating services")
-				return
-			}
-			newServiceMap[serviceConfig.Name] = oldService
-		} else {
-			newService := service.NewService(i.logger, serviceConfig)
-			newService.UpdateRouter(i.router)
-			err = newService.Start(i.ctx)
-			if err != nil {
-				i.logger.Error().Str("service", serviceConfig.Name).Err(err).Msg("Error when initializing services")
-				return
-			}
-			newServiceMap[serviceConfig.Name] = newService
+	for _, out := range outbounds {
+		if err := out.PostInitialize(prepared, prepared); err != nil {
+			return fmt.Errorf("出口 %s：%w", out.Name(), err)
 		}
 	}
+	oldConfigs := make(map[string]*config.Service)
+	for _, c := range i.appliedServices {
+		oldConfigs[c.Name] = c
+	}
+	newServices := make(map[string]adapter.Service)
+	changed := make(map[string]bool)
+	for _, c := range next.Services {
+		if c == nil || c.Name == "" {
+			return errors.New("入口名称不能为空")
+		}
+		if _, duplicate := newServices[c.Name]; duplicate {
+			return fmt.Errorf("入口名称重复：%s", c.Name)
+		}
+		if _, err := transport.NewServer(c.Encryption); err != nil {
+			return err
+		}
+		old := oldConfigs[c.Name]
+		// Changing only an entry's default route must not reopen its socket.
+		if old != nil {
+			a, b := *old, *c
+			a.DefaultOutbound, b.DefaultOutbound = "", ""
+			if reflect.DeepEqual(a, b) {
+				newServices[c.Name] = i.serviceMap[c.Name]
+				continue
+			}
+		}
+		changed[c.Name] = true
+		newServices[c.Name] = nil
+	}
+	closed := make(map[string]bool)
+	opened := make(map[string]adapter.Service)
+	rollback := func(cause error) error {
+		for _, s := range opened {
+			s.Close()
+		}
+		for name := range closed {
+			s := service.NewService(i.logger, oldConfigs[name])
+			s.UpdateRouter(i.router)
+			if err := s.Start(i.ctx); err != nil {
+				cause = errors.Join(cause, fmt.Errorf("恢复入口 %s 失败：%w", name, err))
+			} else {
+				i.serviceMap[name] = s
+			}
+		}
+		return cause
+	}
+	for name, old := range i.serviceMap {
+		if _, exists := newServices[name]; !exists || changed[name] {
+			old.Close()
+			closed[name] = true
+		}
+	}
+	for _, c := range next.Services {
+		if !changed[c.Name] {
+			continue
+		}
+		s := service.NewService(i.logger, c)
+		s.UpdateRouter(i.router)
+		if err := s.Start(i.ctx); err != nil {
+			return rollback(fmt.Errorf("入口 %s：%w", c.Name, err))
+		}
+		opened[c.Name], newServices[c.Name] = s, s
+	}
+	if commit != nil {
+		if err := commit(); err != nil {
+			return rollback(err)
+		}
+	}
+	// Initialize already succeeded with exactly these options.
+	if err := i.router.UpdateConfig(options); err != nil {
+		return rollback(err)
+	}
+	i.config, i.serviceMap, i.outboundMap = next, newServices, outbounds
+	i.appliedServices = next.Services
+	return nil
+}
 
-	i.outboundMap = newOutboundMap
-	i.serviceMap = newServiceMap
+func (i *Instance) Close() {
+	i.applyMu.Lock()
+	defer i.applyMu.Unlock()
+	for _, s := range i.serviceMap {
+		s.Close()
+	}
 }

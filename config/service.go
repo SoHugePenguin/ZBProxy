@@ -3,12 +3,13 @@ package config
 import "github.com/layou233/zbproxy/v3/common/network"
 
 type Service struct {
-	Name          string
-	Bind          string `json:",omitempty"`
-	TargetAddress string `json:",omitempty"`
-	TargetPort    uint16 `json:",omitempty"`
-	Listen        uint16
-	Encryption    *Encryption `json:",omitempty"`
+	Name            string
+	Bind            string `json:",omitempty"`
+	TargetAddress   string `json:",omitempty"`
+	TargetPort      uint16 `json:",omitempty"`
+	Listen          uint16
+	DefaultOutbound string      `json:",omitempty"`
+	Encryption      *Encryption `json:",omitempty"`
 
 	EnableProxyProtocol bool                          `json:",omitempty"`
 	IPAccess            access                        `json:",omitempty"`
@@ -54,8 +55,12 @@ type tlsSniffing struct {
 	SNIAllowListTags []string `json:",omitempty"`
 }
 
-type proxyOptions struct {
-	Type    string `json:",omitempty"`
-	Network string `json:",omitempty"`
-	Address string `json:",omitempty"`
+type ProxyOptions struct {
+	Type     string `json:",omitempty"`
+	Network  string `json:",omitempty"`
+	Address  string `json:",omitempty"`
+	Username string `json:",omitempty"`
+	Password string `json:",omitempty"`
 }
+
+type proxyOptions = ProxyOptions

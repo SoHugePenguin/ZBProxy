@@ -28,7 +28,7 @@ func SniffClientHandshake(conn bufio.PeekConn, metadata *adapter.Metadata) error
 	if err != nil {
 		return common.Cause("read packet size: ", err)
 	}
-	if packetSize > 264 { // maximum possible size of this kind of packet
+	if packetSize < 1 || packetSize > 264 { // maximum possible size of this kind of packet
 		return ErrBadPacket
 	}
 	conn.SetReadDeadline(time.Now().Add(10 * time.Second))
@@ -99,6 +99,9 @@ func SniffClientHandshake(conn bufio.PeekConn, metadata *adapter.Metadata) error
 		if err != nil {
 			return common.Cause("read packet size: ", err)
 		}
+		if packetSize < 1 || packetSize > 8192 {
+			return ErrBadPacket
+		}
 		conn.SetReadDeadline(time.Now().Add(10 * time.Second))
 		packetContent, err = conn.Peek(int(packetSize))
 		if err != nil {
@@ -118,9 +121,10 @@ func SniffClientHandshake(conn bufio.PeekConn, metadata *adapter.Metadata) error
 			return common.Cause("read player name: ", err)
 		}
 		if metadata.Minecraft.ProtocolVersion >= 764 { // 1.20.2
-			if buffer.Len() == 16 { // UUID exists
-				copy(metadata.Minecraft.UUID[:], buffer.Bytes())
+			if buffer.Len() != 16 {
+				return ErrBadPacket
 			}
+			copy(metadata.Minecraft.UUID[:], buffer.Bytes())
 		} else if metadata.Minecraft.ProtocolVersion >= 761 { // 1.19.3
 			var hasUUID byte
 			hasUUID, err = buffer.ReadByte()

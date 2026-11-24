@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/layou233/zbproxy/v3/common/network"
 )
@@ -51,14 +52,38 @@ func NewClientFromURL(dialer network.Dialer, s string) (*Client, error) {
 }
 
 func (c *Client) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
-	conn, err := c.Dialer.DialContext(ctx, c.Network, c.Address)
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	proxyNetwork := c.Network
+	if proxyNetwork == "" {
+		proxyNetwork = "tcp"
+	}
+	conn, err := c.Dialer.DialContext(ctx, proxyNetwork, c.Address)
 	if err != nil {
 		return nil, fmt.Errorf("socks: fail to dial to SOCKS server: %v", err)
 	}
-	if err = c.Handshake(conn, conn, network, address); err != nil {
+	deadline, _ := ctx.Deadline()
+	conn.SetDeadline(deadline)
+	done, stopped := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(stopped)
+		select {
+		case <-ctx.Done():
+			conn.Close()
+		case <-done:
+		}
+	}()
+	err = c.Handshake(conn, conn, network, address)
+	close(done)
+	<-stopped
+	if err == nil {
+		err = ctx.Err()
+	}
+	if err != nil {
 		conn.Close()
 		return nil, err
 	}
+	conn.SetDeadline(time.Time{})
 	return conn, nil
 }
 
@@ -75,10 +100,10 @@ func (c *Client) Handshake(r io.Reader, w io.Writer, network, address string) er
 }
 
 func (c *Client) GetVersion() string {
-	c.Version = strings.ToLower(c.Version)
-	switch c.Version {
+	version := strings.ToLower(c.Version)
+	switch version {
 	case "5", "4a", "4":
-		return c.Version
+		return version
 	case "", "socks", "socks5":
 		return "5"
 	case "socks4a":

@@ -78,7 +78,7 @@ $('toggle').addEventListener('click',async()=>{
   if(!await confirmAction(enabled?'启用白名单保护':'关闭白名单保护',description,enabled?'确认启用':'确认关闭'))return;
   await change('/api/whitelist','PUT',{enabled},enabled?'白名单保护已启用。':'白名单保护已关闭。');
 });
-$('refresh').addEventListener('click',()=>{notice('');load();});
+$('refresh').addEventListener('click',()=>{notice('');if(!$('whitelist-panel').hidden)load();});
 $('previous').addEventListener('click',()=>load(state.page-1));
 $('next').addEventListener('click',()=>load(state.page+1));
 $('search-form').addEventListener('submit',event=>{event.preventDefault();clearTimeout(searchTimer);load(1);});

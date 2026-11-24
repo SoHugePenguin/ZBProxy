@@ -7,29 +7,22 @@ import (
 	"io"
 	"net"
 	"strconv"
-
-	"github.com/layou233/zbproxy/v3/common/rw"
 )
 
 const (
-	version5 byte = 5
-
-	AuthTypeNotRequired       byte = 0x00
-	AuthTypeGSSAPI            byte = 0x01
-	AuthTypeUsernamePassword  byte = 0x02
-	AuthTypeNoAcceptedMethods byte = 0xFF
-
-	UsernamePasswordStatusSuccess byte = 0x00
-	UsernamePasswordStatusFailure byte = 0x01
-
-	CommandConnect      byte = 0x01
-	CommandBind         byte = 0x02
-	CommandUDPAssociate byte = 0x03
-
-	AddressTypeIPv4   byte = 0x01
-	AddressTypeDomain byte = 0x03
-	AddressTypeIPv6   byte = 0x04
-
+	version5                         byte = 5
+	AuthTypeNotRequired              byte = 0
+	AuthTypeGSSAPI                   byte = 1
+	AuthTypeUsernamePassword         byte = 2
+	AuthTypeNoAcceptedMethods        byte = 255
+	UsernamePasswordStatusSuccess    byte = 0
+	UsernamePasswordStatusFailure    byte = 1
+	CommandConnect                   byte = 1
+	CommandBind                      byte = 2
+	CommandUDPAssociate              byte = 3
+	AddressTypeIPv4                  byte = 1
+	AddressTypeDomain                byte = 3
+	AddressTypeIPv6                  byte = 4
 	ReplyCode5Success                byte = 0
 	ReplyCode5Failure                byte = 1
 	ReplyCode5NotAllowed             byte = 2
@@ -46,125 +39,103 @@ func (c *Client) handshake5(r io.Reader, w io.Writer, network, address string) e
 	if err != nil {
 		return err
 	}
-	port64, err := strconv.ParseUint(portString, 10, 16)
+	port, err := strconv.ParseUint(portString, 10, 16)
 	if err != nil {
 		return err
 	}
-	port := uint16(port64)
-
-	if len(c.Methods) == 0 {
-		c.Methods = []byte{AuthTypeNotRequired}
+	if len(c.Username) > 255 || len(c.Password) > 255 {
+		return errors.New("socks: credentials exceed 255 bytes")
 	}
-	_, err = w.Write([]byte{version5, byte(len(c.Methods))})
-	if err != nil {
-		return err
-	}
-	_, err = w.Write(c.Methods)
-	if err != nil {
-		return err
-	}
-
-	handshakeResp := make([]byte, 2)
-	_, err = r.Read(handshakeResp)
-	if err != nil {
-		return err
-	}
-	if handshakeResp[0] != version5 {
-		return fmt.Errorf("socks: expected server version 5, but got %v", handshakeResp[0])
-	}
-	switch handshakeResp[1] {
-	case AuthTypeNotRequired:
-	case AuthTypeUsernamePassword:
-		return errors.New("socks: username/password auth is not implemented yet")
-	case AuthTypeGSSAPI:
-		return errors.New("socks: unsupported SOCKS 5 auth type GSSAPI")
-	case AuthTypeNoAcceptedMethods:
-		return errors.New("socks: server responded no acceptable methods")
-	default:
-		return fmt.Errorf("socks: unknown auth method: %v", handshakeResp[1])
-	}
-
-	_, err = w.Write([]byte{version5, CommandConnect, 0}) // TODO: Bind & UDPAssociate
-	if err != nil {
-		return err
-	}
-	if ip := net.ParseIP(host); ip != nil {
-		if ipv4 := ip.To4(); ipv4 != nil {
-			_, err = w.Write([]byte{AddressTypeIPv4})
-			if err != nil {
-				return err
-			}
-			_, err = w.Write(ipv4)
-			if err != nil {
-				return err
-			}
-		} else if ipv6 := ip.To16(); ipv6 != nil {
-			_, err = w.Write([]byte{AddressTypeIPv6})
-			if err != nil {
-				return err
-			}
-			_, err = w.Write(ipv6)
-			if err != nil {
-				return err
-			}
-		} else {
-			return fmt.Errorf("socks: unknown IP type: %v", ip)
-		}
-	} else {
-		_, err = w.Write([]byte{AddressTypeDomain, byte(len(host))})
-		if err != nil {
-			return err
-		}
-		_, err = w.Write([]byte(host))
-		if err != nil {
-			return err
+	methods := c.Methods
+	if len(methods) == 0 {
+		methods = []byte{AuthTypeNotRequired}
+		if c.Username != "" || c.Password != "" {
+			methods = []byte{AuthTypeUsernamePassword}
 		}
 	}
-	err = binary.Write(w, binary.BigEndian, port)
-	if err != nil {
+	if _, err = w.Write(append([]byte{version5, byte(len(methods))}, methods...)); err != nil {
 		return err
 	}
-
-	reply := make([]byte, 4)
-	_, err = r.Read(reply)
-	if err != nil {
+	var reply [2]byte
+	if _, err = io.ReadFull(r, reply[:]); err != nil {
 		return err
 	}
 	if reply[0] != version5 {
-		return fmt.Errorf("socks: expected server version 5, but got %v", handshakeResp[0])
+		return errors.New("socks: invalid server version")
+	}
+	accepted := false
+	for _, method := range methods {
+		if method == reply[1] {
+			accepted = true
+		}
+	}
+	if !accepted {
+		return errors.New("socks: proxy rejected authentication method")
 	}
 	switch reply[1] {
-	case ReplyCode5Success:
+	case AuthTypeNotRequired:
+	case AuthTypeUsernamePassword:
+		if c.Username == "" || c.Password == "" {
+			return errors.New("socks: username and password are required")
+		}
+		auth := append([]byte{1, byte(len(c.Username))}, []byte(c.Username)...)
+		auth = append(auth, byte(len(c.Password)))
+		auth = append(auth, []byte(c.Password)...)
+		if _, err = w.Write(auth); err != nil {
+			return err
+		}
+		if _, err = io.ReadFull(r, reply[:]); err != nil {
+			return err
+		}
+		if reply[0] != 1 || reply[1] != 0 {
+			return errors.New("socks: username/password authentication failed")
+		}
 	default:
-		return fmt.Errorf("socks: fail to connect destination through SOCKS 5, reason code: %v", reply[1])
+		return errors.New("socks: unsupported authentication method")
 	}
-	switch reply[3] {
-	case AddressTypeIPv4:
-		ipv4 := make([]byte, 4)
-		_, err = r.Read(ipv4)
-		if err != nil {
-			return err
+	request := []byte{version5, CommandConnect, 0}
+	if ip := net.ParseIP(host); ip != nil {
+		if ip4 := ip.To4(); ip4 != nil {
+			request = append(append(request, AddressTypeIPv4), ip4...)
+		} else {
+			request = append(append(request, AddressTypeIPv6), ip.To16()...)
 		}
-	case AddressTypeDomain:
-		l, err := rw.ReadByte(r)
-		if err != nil {
-			return err
+	} else {
+		if len(host) == 0 || len(host) > 255 {
+			return errors.New("socks: invalid target hostname length")
 		}
-		domain := make([]byte, l)
-		_, err = r.Read(domain)
-		if err != nil {
-			return err
-		}
-	case AddressTypeIPv6:
-		ipv6 := make([]byte, 16)
-		_, err = r.Read(ipv6)
-		if err != nil {
-			return err
-		}
+		request = append(request, AddressTypeDomain, byte(len(host)))
+		request = append(request, host...)
 	}
-	_, err = rw.ReadBytes(r, 2)
-	if err != nil {
+	request = binary.BigEndian.AppendUint16(request, uint16(port))
+	if _, err = w.Write(request); err != nil {
 		return err
 	}
-	return nil
+	var header [4]byte
+	if _, err = io.ReadFull(r, header[:]); err != nil {
+		return err
+	}
+	if header[0] != version5 || header[2] != 0 {
+		return errors.New("socks: invalid CONNECT response")
+	}
+	if header[1] != 0 {
+		return fmt.Errorf("socks: CONNECT failed (code %d)", header[1])
+	}
+	var size int64
+	switch header[3] {
+	case AddressTypeIPv4:
+		size = 4
+	case AddressTypeIPv6:
+		size = 16
+	case AddressTypeDomain:
+		var length [1]byte
+		if _, err = io.ReadFull(r, length[:]); err != nil {
+			return err
+		}
+		size = int64(length[0])
+	default:
+		return errors.New("socks: invalid bound address type")
+	}
+	_, err = io.CopyN(io.Discard, r, size+2)
+	return err
 }

@@ -2,10 +2,12 @@ package route
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/layou233/zbproxy/v3/adapter"
@@ -14,6 +16,7 @@ import (
 	"github.com/layou233/zbproxy/v3/common/set"
 	"github.com/layou233/zbproxy/v3/config"
 	"github.com/layou233/zbproxy/v3/protocol"
+	"github.com/layou233/zbproxy/v3/protocol/minecraft"
 
 	"github.com/phuslu/log"
 )
@@ -25,6 +28,8 @@ type RouterOptions struct {
 	RuleRegistry    map[string]CustomRuleInitializer
 	SnifferRegistry map[string]protocol.SnifferFunc
 	PlayerAccess    func(string) bool
+	Services        []*config.Service
+	Targets         []*config.Outbound
 }
 
 type Router struct {
@@ -39,6 +44,9 @@ type Router struct {
 	defaultOutbound adapter.Outbound
 	started         bool
 	playerAccess    func(string) bool
+	serviceDefaults map[string]string
+	playerRoutes    []config.PlayerRoute
+	targets         map[string]*config.Outbound
 }
 
 var _ adapter.Router = (*Router)(nil)
@@ -74,6 +82,25 @@ func (r *Router) Initialize(ctx context.Context, logger *log.Logger, options Rou
 	r.ruleRegistry = options.RuleRegistry
 	r.snifferRegistry = options.SnifferRegistry
 	r.playerAccess = options.PlayerAccess
+	r.serviceDefaults = make(map[string]string)
+	for _, service := range options.Services {
+		if service.DefaultOutbound != "" {
+			if _, err := r.findOutboundByName(options.OutboundMap, service.DefaultOutbound); err != nil {
+				return err
+			}
+			r.serviceDefaults[service.Name] = service.DefaultOutbound
+		}
+	}
+	r.playerRoutes = append([]config.PlayerRoute(nil), options.Config.PlayerRoutes...)
+	for _, rule := range r.playerRoutes {
+		if _, err := r.findOutboundByName(options.OutboundMap, rule.Outbound); err != nil {
+			return err
+		}
+	}
+	r.targets = make(map[string]*config.Outbound)
+	for _, target := range options.Targets {
+		r.targets[target.Name] = target
+	}
 	r.rules = rules
 	r.started = true
 	return nil
@@ -87,50 +114,70 @@ func (r *Router) HandleConnection(conn net.Conn, metadata *adapter.Metadata) {
 	rules := r.rules
 	outboundMap := r.outboundMap
 	snifferRegistry := r.snifferRegistry
+	serviceDefaults, playerRoutes, targets := r.serviceDefaults, r.playerRoutes, r.targets
 	r.access.RUnlock()
 	cachedConn := bufio.NewCachedConn(conn)
-	for i, rule := range rules {
-		match := rule.Match(metadata)
-		if match {
-			routeLogger.Trace().Str("id", metadata.ConnectionID).Int("rule_index", i).Msg("Rule matched")
-			ruleConfig := rule.Config()
-			// handle sniff
-			if len(ruleConfig.Sniff) > 0 {
-				protocol.Sniff(routeLogger, cachedConn, metadata, snifferRegistry, ruleConfig.Sniff...)
-			}
-			// handle rewrite
-			if ruleConfig.Rewrite.TargetAddress != "" {
-				metadata.DestinationHostname = ruleConfig.Rewrite.TargetAddress
-			}
-			if ruleConfig.Rewrite.TargetPort > 0 {
-				metadata.DestinationPort = ruleConfig.Rewrite.TargetPort
-			}
-			if ruleConfig.Rewrite.Minecraft != nil {
-				if metadata.Minecraft == nil {
-					routeLogger.Debug().Str("id", metadata.ConnectionID).Int("rule_index", i).Msg("No Minecraft metadata, skipped rewrite")
-				} else {
-					if ruleConfig.Rewrite.Minecraft.Hostname != "" {
-						metadata.Minecraft.RewrittenDestination = ruleConfig.Rewrite.Minecraft.Hostname
-					}
-					if ruleConfig.Rewrite.Minecraft.Port > 0 {
-						metadata.Minecraft.RewrittenPort = ruleConfig.Rewrite.Minecraft.Port
-					}
-					if ruleConfig.Rewrite.Minecraft.Intent > 0 {
-						metadata.Minecraft.NextState = ruleConfig.Rewrite.Minecraft.Intent
+	if selected, managed := serviceDefaults[metadata.ServiceName]; managed {
+		if err := minecraft.SniffClientHandshake(cachedConn, metadata); err != nil {
+			cachedConn.Close()
+			return
+		}
+		cachedConn.Rewind(0)
+		selected = selectPlayerOutbound(selected, metadata, playerRoutes)
+		var err error
+		outbound, err = r.findOutboundByName(outboundMap, selected)
+		if err != nil {
+			cachedConn.Close()
+			return
+		}
+		if target := targets[selected]; target != nil {
+			metadata.DestinationHostname, metadata.DestinationPort = target.TargetAddress, target.TargetPort
+			metadata.Minecraft.RewrittenDestination, metadata.Minecraft.RewrittenPort = target.TargetAddress, target.TargetPort
+		}
+	} else {
+		for i, rule := range rules {
+			match := rule.Match(metadata)
+			if match {
+				routeLogger.Trace().Str("id", metadata.ConnectionID).Int("rule_index", i).Msg("Rule matched")
+				ruleConfig := rule.Config()
+				// handle sniff
+				if len(ruleConfig.Sniff) > 0 {
+					protocol.Sniff(routeLogger, cachedConn, metadata, snifferRegistry, ruleConfig.Sniff...)
+				}
+				// handle rewrite
+				if ruleConfig.Rewrite.TargetAddress != "" {
+					metadata.DestinationHostname = ruleConfig.Rewrite.TargetAddress
+				}
+				if ruleConfig.Rewrite.TargetPort > 0 {
+					metadata.DestinationPort = ruleConfig.Rewrite.TargetPort
+				}
+				if ruleConfig.Rewrite.Minecraft != nil {
+					if metadata.Minecraft == nil {
+						routeLogger.Debug().Str("id", metadata.ConnectionID).Int("rule_index", i).Msg("No Minecraft metadata, skipped rewrite")
+					} else {
+						if ruleConfig.Rewrite.Minecraft.Hostname != "" {
+							metadata.Minecraft.RewrittenDestination = ruleConfig.Rewrite.Minecraft.Hostname
+						}
+						if ruleConfig.Rewrite.Minecraft.Port > 0 {
+							metadata.Minecraft.RewrittenPort = ruleConfig.Rewrite.Minecraft.Port
+						}
+						if ruleConfig.Rewrite.Minecraft.Intent > 0 {
+							metadata.Minecraft.NextState = ruleConfig.Rewrite.Minecraft.Intent
+						}
 					}
 				}
-			}
-			// handle outbound
-			if ruleConfig.Outbound != "" {
-				var err error
-				outbound, err = r.findOutboundByName(outboundMap, ruleConfig.Outbound)
-				if err != nil {
-					routeLogger.Error().Str("id", metadata.ConnectionID).Int("rule_index", i).
-						Err(err).Msg("Failed to find outbound")
-					conn.Close()
-					return
+				// handle outbound
+				if ruleConfig.Outbound != "" {
+					var err error
+					outbound, err = r.findOutboundByName(outboundMap, ruleConfig.Outbound)
+					if err != nil {
+						routeLogger.Error().Str("id", metadata.ConnectionID).Int("rule_index", i).
+							Err(err).Msg("Failed to find outbound")
+						conn.Close()
+						return
+					}
+					break
 				}
-				break
 			}
 		}
 	}
@@ -180,7 +227,34 @@ func (r *Router) HandleConnection(conn net.Conn, metadata *adapter.Metadata) {
 }
 
 func (r *Router) FindOutboundByName(name string) (adapter.Outbound, error) {
+	r.access.RLock()
+	defer r.access.RUnlock()
 	return r.findOutboundByName(r.outboundMap, name)
+}
+
+func selectPlayerOutbound(fallback string, metadata *adapter.Metadata, rules []config.PlayerRoute) string {
+	m := metadata.Minecraft
+	if m == nil || m.PlayerName == "" {
+		return fallback
+	}
+	// UUID is more specific; names remain compatible with pre-1.19 clients.
+	for _, kind := range []string{"uuid", "name"} {
+		for _, serviceName := range []string{metadata.ServiceName, ""} {
+			for _, rule := range rules {
+				if !rule.Enabled || rule.Kind != kind || rule.Service != serviceName {
+					continue
+				}
+				match := kind == "name" && strings.EqualFold(rule.Value, m.PlayerName)
+				if kind == "uuid" && m.UUID != [16]byte{} {
+					match = strings.EqualFold(strings.ReplaceAll(rule.Value, "-", ""), hex.EncodeToString(m.UUID[:]))
+				}
+				if match {
+					return rule.Outbound
+				}
+			}
+		}
+	}
+	return fallback
 }
 
 // AllowPlayer is checked only at Minecraft login, never on the relay data path.

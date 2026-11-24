@@ -12,7 +12,7 @@ import (
 	"github.com/layou233/zbproxy/v3/adapter"
 	"github.com/layou233/zbproxy/v3/common"
 	"github.com/layou233/zbproxy/v3/common/network"
-	"github.com/layou233/zbproxy/v3/common/network/socks"
+	"github.com/layou233/zbproxy/v3/common/network/proxydial"
 	"github.com/layou233/zbproxy/v3/common/proxyprotocol"
 	"github.com/layou233/zbproxy/v3/config"
 	"github.com/layou233/zbproxy/v3/protocol/minecraft"
@@ -77,14 +77,10 @@ func (o *Plain) PostInitialize(router adapter.Router, provider adapter.RouteReso
 	default:
 		return fmt.Errorf("invalid proxy protocol version: %v", o.config.ProxyProtocolVersion)
 	}
-	switch o.config.ProxyOptions.Type {
-	case "socks", "socks5", "socks4a", "socks4":
-		o.dialer = &socks.Client{
-			Dialer:  o.dialer,
-			Version: o.config.ProxyOptions.Type,
-			Network: o.config.ProxyOptions.Network,
-			Address: o.config.ProxyOptions.Address,
-		}
+	p := o.config.ProxyOptions
+	o.dialer, err = proxydial.New(o.dialer, p.Type, p.Network, p.Address, p.Username, p.Password)
+	if err != nil {
+		return err
 	}
 	o.router = router
 	return nil

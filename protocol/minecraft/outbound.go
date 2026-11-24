@@ -21,7 +21,7 @@ import (
 	"github.com/layou233/zbproxy/v3/common/bufio"
 	"github.com/layou233/zbproxy/v3/common/mcprotocol"
 	"github.com/layou233/zbproxy/v3/common/network"
-	"github.com/layou233/zbproxy/v3/common/network/socks"
+	"github.com/layou233/zbproxy/v3/common/network/proxydial"
 	"github.com/layou233/zbproxy/v3/common/proxyprotocol"
 	"github.com/layou233/zbproxy/v3/common/set"
 	"github.com/layou233/zbproxy/v3/config"
@@ -43,7 +43,19 @@ type Outbound struct {
 	hostnameAccessLists []set.StringSet
 	nameAccessLists     []set.StringSet
 	onlineCount         atomic.Int32
+	sharedOnlineCount   *atomic.Int32
 	motdCache           atomic.Pointer[cachedMOTD]
+}
+
+func (o *Outbound) ConnectionCount() *atomic.Int32 {
+	if o.sharedOnlineCount != nil {
+		return o.sharedOnlineCount
+	}
+	return &o.onlineCount
+}
+
+func (o *Outbound) ShareConnectionCount(previous *Outbound) {
+	o.sharedOnlineCount = previous.ConnectionCount()
 }
 
 var (
@@ -169,14 +181,10 @@ func (o *Outbound) PostInitialize(router adapter.Router, provider adapter.RouteR
 	default:
 		return fmt.Errorf("invalid proxy protocol version: %v", o.config.ProxyProtocolVersion)
 	}
-	switch o.config.ProxyOptions.Type {
-	case "socks", "socks5", "socks4a", "socks4":
-		o.dialer = &socks.Client{
-			Dialer:  o.dialer,
-			Version: o.config.ProxyOptions.Type,
-			Network: o.config.ProxyOptions.Network,
-			Address: o.config.ProxyOptions.Address,
-		}
+	p := o.config.ProxyOptions
+	o.dialer, err = proxydial.New(o.dialer, p.Type, p.Network, p.Address, p.Username, p.Password)
+	if err != nil {
+		return err
 	}
 	o.router = router
 	return nil
@@ -404,7 +412,7 @@ func (o *Outbound) InjectConnection(ctx context.Context, conn *bufio.CachedConn,
 			}
 		}
 		if o.config.Minecraft.OnlineCount.EnableMaxLimit &&
-			o.config.Minecraft.OnlineCount.Max <= o.onlineCount.Load() {
+			o.config.Minecraft.OnlineCount.Max <= o.ConnectionCount().Load() {
 			msg, err := generatePlayerNumberLimitExceededMessage(o.config, metadata.Minecraft.PlayerName).MarshalJSON()
 			if err != nil {
 				o.access.RUnlock()
@@ -470,9 +478,9 @@ func (o *Outbound) InjectConnection(ctx context.Context, conn *bufio.CachedConn,
 		o.logger.Info().Str("id", metadata.ConnectionID).Str("outbound", o.config.Name).
 			Str("player", metadata.Minecraft.PlayerName).Msg("Created Minecraft connection")
 		o.access.RUnlock()
-		o.onlineCount.Add(1)
+		o.ConnectionCount().Add(1)
 		err = bufio.CopyConn(serverConn, conn)
-		o.onlineCount.Add(-1)
+		o.ConnectionCount().Add(-1)
 		return err
 
 	case mcprotocol.IntentTransfer:

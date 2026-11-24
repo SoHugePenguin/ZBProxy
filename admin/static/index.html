@@ -4,16 +4,26 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="color-scheme" content="light">
-  <title>白名单 · ZBProxy</title>
+  <title>控制台 · ZBProxy</title>
   <link rel="icon" href="data:,">
   <link rel="stylesheet" href="/app.css">
   <script src="/app.js" defer></script>
+  <script src="/network.js" defer></script>
 </head>
 <body>
   <header class="header"><div class="header-inner"><a class="brand" href="/" aria-label="ZBProxy 首页"><span class="brand-mark">ZB</span><span>ZBProxy</span></a><span class="header-label">个人管理面板</span></div></header>
   <main>
-    <div class="intro"><div><div class="eyebrow">访问管理</div><h1>玩家白名单</h1><p>管理可以通过代理登录的 Minecraft 玩家。</p></div><button id="refresh" class="button secondary" type="button"><span aria-hidden="true">↻</span> 刷新列表</button></div>
+    <div class="intro"><div><div class="eyebrow">ZBPROXY</div><h1>代理控制台</h1></div><button id="refresh" class="button secondary" type="button" title="刷新当前列表" aria-label="刷新当前列表"><svg class="icon" aria-hidden="true"><use href="/icons.svg#refresh"/></svg></button></div>
     <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
+    <nav class="tabs" aria-label="管理导航"><button type="button" data-view="outbounds" aria-current="page">出口线路 <span id="outbound-count" class="count">0</span></button><button type="button" data-view="services">入口端口</button><button type="button" data-view="routes">玩家分流</button><button type="button" data-view="whitelist">白名单</button></nav>
+    <section id="network-panel" aria-labelledby="network-title">
+      <div class="section-toolbar"><h2 id="network-title">出口线路</h2><div class="toolbar-actions"><label id="probe-mode-label" class="inline-label" for="probe-mode">测试方式<select id="probe-mode"><option value="tcp">TCP 连接</option><option value="minecraft">Minecraft Ping</option></select></label><button id="probe-all" type="button" class="button secondary"><svg class="icon" aria-hidden="true"><use href="/icons.svg#activity"/></svg>测试全部</button><button id="network-add" type="button" class="button primary"><svg class="icon" aria-hidden="true"><use href="/icons.svg#plus"/></svg><span id="network-add-label">添加出口</span></button></div></div>
+      <div id="network-load-error" class="notice error" role="alert" hidden></div>
+      <div class="network-table-wrap"><table id="network-table"><thead id="network-head"></thead><tbody id="network-rows"><tr><td class="empty">正在读取配置…</td></tr></tbody></table></div>
+      <div class="section-footer"><span id="network-summary">正在加载</span><span id="network-status" role="status" aria-live="polite"></span></div>
+      <div id="probe-results" hidden><div class="section-toolbar"><h2>线路测试结果</h2><button id="clear-results" class="button secondary" type="button">清空结果</button></div><div class="network-table-wrap"><table><thead><tr><th>出口</th><th>测试方式</th><th>成功 / 次数</th><th>平均耗时</th><th>各次结果</th><th>测试时间</th></tr></thead><tbody id="probe-rows"></tbody></table></div></div>
+    </section>
+    <div id="whitelist-panel" hidden>
     <section class="policy-card" aria-labelledby="policy-title"><div class="policy-icon" aria-hidden="true">✓</div><div class="policy-copy"><div class="policy-heading"><h2 id="policy-title">白名单保护</h2><span id="mode" class="badge">正在加载</span></div><p id="policy-description">正在读取访问设置…</p></div><button id="toggle" class="switch" type="button" role="switch" aria-checked="false" aria-label="启用白名单保护" disabled><span></span></button></section>
     <div class="workspace">
       <section class="card members" aria-labelledby="members-title">
@@ -27,8 +37,10 @@
         <section class="help-card"><h2>修改即时生效</h2><p>保存后立即用于新的登录请求，无需重启代理。已经连接的玩家不会被踢出。</p><p>这里管理的是玩家名，正版身份仍由目标服务器验证。原有配置中的访问限制继续生效。</p></section>
       </aside>
     </div>
-    <footer><span>ZBProxy · 个人控制台</span><span>本地保存 · 按需加载</span></footer>
+    </div>
+    <footer><span>ZBProxy · 个人控制台</span><span id="revision-label">本地保存</span></footer>
   </main>
   <dialog id="confirm-dialog" aria-labelledby="dialog-title" aria-describedby="dialog-description"><form method="dialog"><h2 id="dialog-title">确认操作</h2><p id="dialog-description"></p><div class="dialog-actions"><button value="cancel" class="button secondary">取消</button><button id="confirm-button" value="confirm" class="button primary">确认</button></div></form></dialog>
+  <dialog id="editor-dialog" aria-labelledby="editor-title"><form id="editor-form"><div class="editor-heading"><h2 id="editor-title"></h2><button id="editor-close" class="icon-button" type="button" aria-label="关闭"><svg class="icon" aria-hidden="true"><use href="/icons.svg#x"/></svg></button></div><div id="editor-fields"></div><div id="editor-error" class="notice error" role="alert" hidden></div><div class="dialog-actions"><button id="editor-cancel" type="button" class="button secondary">取消</button><button id="editor-save" type="submit" class="button primary"><svg class="icon" aria-hidden="true"><use href="/icons.svg#save"/></svg>保存并生效</button></div></form></dialog>
 </body>
 </html>
