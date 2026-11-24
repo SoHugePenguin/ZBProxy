@@ -28,7 +28,7 @@ type asset struct {
 	etag, contentType string
 }
 
-// NewServer serves a buildless, embedded UI with no polling or background jobs.
+// NewServer serves a buildless, embedded UI.
 // An empty password is only allowed on a loopback listener.
 func NewServer(address, username, password string, store *Store, accessLogger ...*log.Logger) (*http.Server, error) {
 	return NewManagedServer(address, username, password, store, nil, accessLogger...)
@@ -51,7 +51,7 @@ func NewManagedServer(address, username, password string, store *Store, manager 
 		return nil, errors.New("非本机管理地址必须设置 ZBProxy.json 的 Web.Password 或环境变量 ZBPROXY_ADMIN_PASSWORD")
 	}
 	static := make(map[string]asset)
-	for _, name := range []string{"index.html", "app.css", "app.js", "network.js", "icons.svg"} {
+	for _, name := range []string{"index.html", "app.css", "app.js", "network.js", "monitor.js", "icons.svg"} {
 		body, err := assets.ReadFile("static/" + name)
 		if err != nil {
 			return nil, err
@@ -100,7 +100,9 @@ func NewManagedServer(address, username, password string, store *Store, manager 
 					return
 				}
 			}
-			if manager != nil && (r.URL.Path == "/api/network" || r.URL.Path == "/api/probe") {
+			if manager != nil && r.URL.Path == "/api/sessions" {
+				manager.serveSessions(w, r)
+			} else if manager != nil && (r.URL.Path == "/api/network" || r.URL.Path == "/api/probe") {
 				manager.ServeHTTP(w, r)
 			} else {
 				serveAPI(w, r, store)

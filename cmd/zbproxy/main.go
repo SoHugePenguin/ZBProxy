@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"syscall"
 	"time"
@@ -21,6 +22,7 @@ import (
 	"github.com/layou233/zbproxy/v3/common/console/color"
 	"github.com/layou233/zbproxy/v3/common/jsonx"
 	"github.com/layou233/zbproxy/v3/config"
+	"github.com/layou233/zbproxy/v3/monitoring"
 	"github.com/layou233/zbproxy/v3/transport"
 	"github.com/layou233/zbproxy/v3/version"
 	"github.com/phuslu/log"
@@ -30,6 +32,7 @@ func main() {
 	configPath := flag.String("config", "ZBProxy.json", "Proxy configuration file")
 	webAddress := flag.String("web", "", "Override Web.Bind/Port in config; empty disables the web UI")
 	whitelistPath := flag.String("whitelist", "ZBProxy.whitelist.json", "Managed player whitelist file")
+	statisticsPath := flag.String("statistics", "", "Player statistics file; defaults to ZBProxy.statistics.json beside the configuration")
 	clientMode := flag.Bool("client", false, "Run local encrypted Minecraft client using EncryptionClient in config")
 	flag.Parse()
 	if *clientMode {
@@ -71,7 +74,16 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	instance, err := zbproxy.NewInstance(ctx, zbproxy.Options{Config: settings, PlayerAccess: store.AllowPlayer})
+	if *statisticsPath == "" {
+		*statisticsPath = filepath.Join(filepath.Dir(*configPath), "ZBProxy.statistics.json")
+	}
+	monitor, err := monitoring.Open(*statisticsPath)
+	if err != nil {
+		panic(err)
+	}
+	stopMonitoring := monitor.StartPersistence(ctx, func(err error) { startupLogger.Error().Err(err).Msg("Player statistics checkpoint failed") })
+	defer stopMonitoring()
+	instance, err := zbproxy.NewInstance(ctx, zbproxy.Options{Config: settings, PlayerAccess: store.AllowPlayer, Monitor: monitor})
 	if err != nil {
 		panic(err)
 	}

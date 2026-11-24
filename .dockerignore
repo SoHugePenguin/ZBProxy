@@ -5,6 +5,7 @@ bin
 ZBProxy.json
 ZBProxy.whitelist.json
 ZBProxy.client.json
+ZBProxy.statistics.json
 *.log
 .env
 .env.*

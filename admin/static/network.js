@@ -11,8 +11,9 @@ const proxyName = value => ({'':'直连', direct:'直连', socks:'SOCKS5', socks
 function setView(view) {
   networkView = view;
   document.querySelectorAll('[data-view]').forEach(b => { if (b.dataset.view === view) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
-  $('whitelist-panel').hidden = view !== 'whitelist'; $('network-panel').hidden = view === 'whitelist';
-  if (view !== 'whitelist') renderNetwork();
+  $('whitelist-panel').hidden = view !== 'whitelist'; $('network-panel').hidden = view === 'whitelist' || view === 'monitor'; $('monitor-panel').hidden = view !== 'monitor';
+  if (view !== 'whitelist' && view !== 'monitor') renderNetwork();
+  document.dispatchEvent(new CustomEvent('network-view-changed', {detail:view}));
 }
 async function loadNetwork() {
   $('network-load-error').hidden = true;
@@ -21,7 +22,7 @@ async function loadNetwork() {
 }
 function renderNetwork() {
   const labels = {outbounds:['出口线路','添加出口'], services:['入口端口','添加入口'], routes:['玩家分流','添加规则']};
-  if (networkView === 'whitelist') return;
+  if (networkView === 'whitelist' || networkView === 'monitor') return;
   $('network-title').textContent = labels[networkView][0]; $('network-add-label').textContent = labels[networkView][1];
   $('probe-all').hidden = $('probe-mode-label').hidden = networkView !== 'outbounds';
   $('network-add').disabled = !networkState || savingNetwork; $('probe-all').disabled = !networkState || testingAll;
@@ -146,7 +147,7 @@ $('network-add').addEventListener('click', () => openEditor(networkView));
 document.querySelectorAll('[data-view]').forEach(b => b.addEventListener('click', () => setView(b.dataset.view)));
 $('editor-close').addEventListener('click', () => $('editor-dialog').close()); $('editor-cancel').addEventListener('click', () => $('editor-dialog').close());
 $('editor-dialog').addEventListener('cancel', event => { if (savingNetwork) event.preventDefault(); });
-$('refresh').addEventListener('click', () => { if (networkView !== 'whitelist') loadNetwork(); });
+$('refresh').addEventListener('click', () => { if (networkView !== 'whitelist' && networkView !== 'monitor') loadNetwork(); });
 $('probe-all').addEventListener('click', async () => { if (!networkState || testingAll) return; testingAll = true; renderNetwork(); const names = networkState.outbounds.map(out => out.Name), mode = $('probe-mode').value; try { for (const name of names) await probe(name, mode); } finally { testingAll = false; renderNetwork(); } });
 $('clear-results').addEventListener('click', () => { probeResults.clear(); renderProbes(); renderNetwork(); });
 loadNetwork();

@@ -11,6 +11,7 @@ import (
 	"github.com/layou233/zbproxy/v3/adapter"
 	"github.com/layou233/zbproxy/v3/common"
 	"github.com/layou233/zbproxy/v3/config"
+	"github.com/layou233/zbproxy/v3/monitoring"
 	"github.com/layou233/zbproxy/v3/protocol"
 	"github.com/layou233/zbproxy/v3/protocol/minecraft"
 	"github.com/layou233/zbproxy/v3/route"
@@ -28,6 +29,7 @@ type Options struct {
 	SnifferRegistry map[string]protocol.SnifferFunc
 	DisableReload   bool
 	PlayerAccess    func(string) bool
+	Monitor         *monitoring.Tracker
 }
 
 type Instance struct {
@@ -42,6 +44,7 @@ type Instance struct {
 	ruleRegistry    map[string]route.CustomRuleInitializer
 	snifferRegistry map[string]protocol.SnifferFunc
 	playerAccess    func(string) bool
+	monitor         *monitoring.Tracker
 }
 
 func NewInstance(ctx context.Context, options Options) (*Instance, error) {
@@ -55,6 +58,7 @@ func NewInstance(ctx context.Context, options Options) (*Instance, error) {
 		ruleRegistry:    options.RuleRegistry,
 		snifferRegistry: options.SnifferRegistry,
 		playerAccess:    options.PlayerAccess,
+		monitor:         options.Monitor,
 	}
 	if options.LogWriter == nil {
 		instance.logger.Writer = &log.ConsoleWriter{
@@ -93,6 +97,8 @@ func (i *Instance) Router() *route.Router {
 	return i.router
 }
 
+func (i *Instance) ConnectionMonitor() *monitoring.Tracker { return i.monitor }
+
 func (i *Instance) Start() error {
 	var err error
 	startTime := time.Now()
@@ -120,6 +126,7 @@ func (i *Instance) Start() error {
 		PlayerAccess:    i.playerAccess,
 		Services:        i.config.Services,
 		Targets:         i.config.Outbounds,
+		Monitor:         i.monitor,
 	})
 	if err != nil {
 		return common.Cause("initialize router: ", err)
@@ -182,7 +189,7 @@ func (i *Instance) ApplyConfig(next *config.Root, commit func() error) error {
 			}
 		}
 	}
-	options := route.RouterOptions{Config: &next.Router, OutboundMap: outbounds, ListMap: next.Lists, RuleRegistry: i.ruleRegistry, SnifferRegistry: i.snifferRegistry, PlayerAccess: i.playerAccess, Services: next.Services, Targets: next.Outbounds}
+	options := route.RouterOptions{Config: &next.Router, OutboundMap: outbounds, ListMap: next.Lists, RuleRegistry: i.ruleRegistry, SnifferRegistry: i.snifferRegistry, PlayerAccess: i.playerAccess, Services: next.Services, Targets: next.Outbounds, Monitor: i.monitor}
 	prepared := &route.Router{}
 	if err := prepared.Initialize(i.ctx, i.logger, options); err != nil {
 		return err

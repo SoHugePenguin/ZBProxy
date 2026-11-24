@@ -18,6 +18,7 @@ import (
 	"github.com/layou233/zbproxy/v3/admin"
 	"github.com/layou233/zbproxy/v3/common/mcprotocol"
 	"github.com/layou233/zbproxy/v3/config"
+	"github.com/layou233/zbproxy/v3/monitoring"
 	"github.com/phuslu/log"
 )
 
@@ -199,4 +200,54 @@ func TestManagedRoutesHotUpdateAndRollback(t *testing.T) {
 	stillWorks := login(t, inPort, "Steve", nil)
 	expectByte(t, stillWorks, 'B')
 	<-portsB
+}
+
+func TestMonitorTracksActualConnectionsAcrossRoutingUpdates(t *testing.T) {
+	a, portsA := target(t, 'A')
+	b, portsB := target(t, 'B')
+	inPort := freePort(t)
+	tracker, _ := monitoring.Open("")
+	root := &config.Root{Log: config.Log{Level: log.PanicLevel}, Services: []*config.Service{{Name: "game", Bind: "127.0.0.1", Listen: inPort, DefaultOutbound: "a"}}, Router: config.Router{DefaultOutbound: "RESET"}, Outbounds: []*config.Outbound{{Name: "a", TargetAddress: "127.0.0.1", TargetPort: a, Minecraft: &config.MinecraftService{}}, {Name: "b", TargetAddress: "127.0.0.1", TargetPort: b, Minecraft: &config.MinecraftService{}}}}
+	instance, err := zbproxy.NewInstance(context.Background(), zbproxy.Options{Config: root, Monitor: tracker})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := instance.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer instance.Close()
+	first := login(t, inPort, "Steve", nil)
+	defer first.Close()
+	expectByte(t, first, 'A')
+	<-portsA
+	first.Write([]byte("xyz"))
+	for _, value := range []byte("xyz") {
+		expectByte(t, first, value)
+	}
+	before := tracker.Snapshot()
+	if len(before.Sessions) != 1 || before.Sessions[0].Outbound != "a" || before.Sessions[0].Service != "game" || before.Sessions[0].UploadBytes <= 3 || before.Sessions[0].DownloadBytes != 4 {
+		t.Fatalf("incorrect live connection accounting: %+v", before)
+	}
+	root.Services[0].DefaultOutbound = "b"
+	if err := instance.ApplyConfig(root, nil); err != nil {
+		t.Fatal(err)
+	}
+	second := login(t, inPort, "Steve", nil)
+	defer second.Close()
+	expectByte(t, second, 'B')
+	<-portsB
+	after := tracker.Snapshot()
+	if len(after.Sessions) != 2 || after.Sessions[0].Outbound != "b" || after.Sessions[1].Outbound != "a" || after.Summary.OnlinePlayers != 1 {
+		t.Fatalf("existing session changed to a new route: %+v", after)
+	}
+	first.Close()
+	second.Close()
+	deadline := time.Now().Add(2 * time.Second)
+	for tracker.Snapshot().Summary.ActiveSessions != 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	done := tracker.Snapshot()
+	if done.Summary.ActiveSessions != 0 || done.Summary.Connections != 2 || done.Summary.UploadBytes <= before.Summary.UploadBytes || done.Summary.DownloadBytes != 5 || done.Players[0].LastOutbound != "b" {
+		t.Fatalf("disconnected connection totals incorrect: %+v", done)
+	}
 }

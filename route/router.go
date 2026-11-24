@@ -15,6 +15,7 @@ import (
 	"github.com/layou233/zbproxy/v3/common/bufio"
 	"github.com/layou233/zbproxy/v3/common/set"
 	"github.com/layou233/zbproxy/v3/config"
+	"github.com/layou233/zbproxy/v3/monitoring"
 	"github.com/layou233/zbproxy/v3/protocol"
 	"github.com/layou233/zbproxy/v3/protocol/minecraft"
 
@@ -30,6 +31,7 @@ type RouterOptions struct {
 	PlayerAccess    func(string) bool
 	Services        []*config.Service
 	Targets         []*config.Outbound
+	Monitor         *monitoring.Tracker
 }
 
 type Router struct {
@@ -47,6 +49,7 @@ type Router struct {
 	serviceDefaults map[string]string
 	playerRoutes    []config.PlayerRoute
 	targets         map[string]*config.Outbound
+	monitor         *monitoring.Tracker
 }
 
 var _ adapter.Router = (*Router)(nil)
@@ -82,6 +85,7 @@ func (r *Router) Initialize(ctx context.Context, logger *log.Logger, options Rou
 	r.ruleRegistry = options.RuleRegistry
 	r.snifferRegistry = options.SnifferRegistry
 	r.playerAccess = options.PlayerAccess
+	r.monitor = options.Monitor
 	r.serviceDefaults = make(map[string]string)
 	for _, service := range options.Services {
 		if service.DefaultOutbound != "" {
@@ -104,6 +108,13 @@ func (r *Router) Initialize(ctx context.Context, logger *log.Logger, options Rou
 	r.rules = rules
 	r.started = true
 	return nil
+}
+
+func (r *Router) MonitorConnection(metadata *adapter.Metadata, outbound, target string) *monitoring.Session {
+	r.access.RLock()
+	monitor := r.monitor
+	r.access.RUnlock()
+	return monitor.Begin(metadata, outbound, target)
 }
 
 func (r *Router) HandleConnection(conn net.Conn, metadata *adapter.Metadata) {

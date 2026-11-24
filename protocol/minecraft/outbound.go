@@ -25,6 +25,7 @@ import (
 	"github.com/layou233/zbproxy/v3/common/proxyprotocol"
 	"github.com/layou233/zbproxy/v3/common/set"
 	"github.com/layou233/zbproxy/v3/config"
+	"github.com/layou233/zbproxy/v3/monitoring"
 	"github.com/layou233/zbproxy/v3/version"
 
 	"github.com/phuslu/log"
@@ -467,7 +468,7 @@ func (o *Outbound) InjectConnection(ctx context.Context, conn *bufio.CachedConn,
 		// write handshake and login packet
 		cache := conn.Cache()
 		vector := net.Buffers{buffer.Bytes(), cache.Bytes()}
-		_, err = vector.WriteTo(serverConn)
+		initialBytes, err := vector.WriteTo(serverConn)
 		buffer.Release()
 		if err != nil {
 			o.access.RUnlock()
@@ -477,6 +478,16 @@ func (o *Outbound) InjectConnection(ctx context.Context, conn *bufio.CachedConn,
 		cache.Advance(cache.Len()) // all written
 		o.logger.Info().Str("id", metadata.ConnectionID).Str("outbound", o.config.Name).
 			Str("player", metadata.Minecraft.PlayerName).Msg("Created Minecraft connection")
+		if observer, ok := o.router.(interface {
+			MonitorConnection(*adapter.Metadata, string, string) *monitoring.Session
+		}); ok {
+			target := net.JoinHostPort(metadata.DestinationHostname, strconv.Itoa(int(metadata.DestinationPort)))
+			if session := observer.MonitorConnection(metadata, o.config.Name, target); session != nil {
+				session.AddUpload(initialBytes)
+				serverConn = session.Wrap(serverConn)
+				defer session.End()
+			}
+		}
 		o.access.RUnlock()
 		o.ConnectionCount().Add(1)
 		err = bufio.CopyConn(serverConn, conn)
