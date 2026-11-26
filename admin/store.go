@@ -13,14 +13,17 @@ import (
 )
 
 type policy struct {
-	enabled bool
-	names   map[string]string
-	keys    []string
+	enabled        bool
+	names          map[string]string
+	keys           []string
+	registered     map[string]string
+	registeredKeys []string
 }
 
 type diskPolicy struct {
-	Enabled bool     `json:"enabled"`
-	Players []string `json:"players"`
+	Enabled           bool     `json:"enabled"`
+	Players           []string `json:"players"`
+	RegisteredPlayers []string `json:"registered_players"`
 }
 
 // Store publishes immutable snapshots. Login checks do one atomic load and
@@ -33,7 +36,7 @@ type Store struct {
 
 func OpenStore(path string) (*Store, error) {
 	s := &Store{path: path}
-	p := &policy{names: make(map[string]string)}
+	p := &policy{names: make(map[string]string), registered: make(map[string]string)}
 	data, err := os.ReadFile(path)
 	if err == nil {
 		var disk diskPolicy
@@ -41,9 +44,22 @@ func OpenStore(path string) (*Store, error) {
 			return nil, fmt.Errorf("read whitelist: %w", err)
 		}
 		p.enabled = disk.Enabled
+		// Old files used one list for both registration and access. Preserve access.
+		if disk.RegisteredPlayers == nil {
+			disk.RegisteredPlayers = disk.Players
+		}
+		for _, name := range disk.RegisteredPlayers {
+			if !validName(name) {
+				return nil, fmt.Errorf("invalid registered Minecraft name: %q", name)
+			}
+			p.registered[strings.ToLower(name)] = name
+		}
 		for _, name := range disk.Players {
 			if !validName(name) {
 				return nil, fmt.Errorf("invalid Minecraft name in whitelist: %q", name)
+			}
+			if _, ok := p.registered[strings.ToLower(name)]; !ok {
+				return nil, fmt.Errorf("whitelisted player is not registered: %q", name)
 			}
 			p.names[strings.ToLower(name)] = name
 		}
@@ -73,6 +89,11 @@ func (p *policy) sort() {
 		p.keys = append(p.keys, key)
 	}
 	sort.Strings(p.keys)
+	p.registeredKeys = make([]string, 0, len(p.registered))
+	for key := range p.registered {
+		p.registeredKeys = append(p.registeredKeys, key)
+	}
+	sort.Strings(p.registeredKeys)
 }
 
 func (s *Store) AllowPlayer(name string) bool {
@@ -87,17 +108,39 @@ func (s *Store) AllowPlayer(name string) bool {
 // Update commits to disk before publishing. A failed save leaves the active
 // whitelist unchanged. There is no player-count quota.
 func (s *Store) Update(enabled *bool, add, remove []string) (int, error) {
+	return s.update(false, enabled, add, remove)
+}
+
+func (s *Store) UpdatePlayers(add, remove []string) (int, error) {
+	return s.update(true, nil, add, remove)
+}
+
+type inputError struct{ message string }
+
+func (e *inputError) Error() string { return e.message }
+
+func (s *Store) update(registry bool, enabled *bool, add, remove []string) (int, error) {
 	for _, names := range [][]string{add, remove} {
 		for _, name := range names {
 			if !validName(name) {
-				return 0, fmt.Errorf("玩家名 %q 无效：只允许 1–16 位英文字母、数字和下划线", name)
+				return 0, &inputError{fmt.Sprintf("玩家名 %q 无效：只允许 1–16 位英文字母、数字和下划线", name)}
 			}
 		}
 	}
 	s.write.Lock()
 	defer s.write.Unlock()
 	old := s.current.Load()
-	next := &policy{enabled: old.enabled, names: make(map[string]string, len(old.names)+len(add))}
+	next := &policy{enabled: old.enabled, names: make(map[string]string, len(old.names)+len(add)), registered: make(map[string]string, len(old.registered)+len(add))}
+	for key, name := range old.registered {
+		next.registered[key] = name
+	}
+	if !registry {
+		for _, name := range add {
+			if _, ok := next.registered[strings.ToLower(name)]; !ok {
+				return 0, &inputError{fmt.Sprintf("玩家 %s 尚未收录，请先在玩家收录中添加", name)}
+			}
+		}
+	}
 	for key, name := range old.names {
 		next.names[key] = name
 	}
@@ -106,17 +149,24 @@ func (s *Store) Update(enabled *bool, add, remove []string) (int, error) {
 		next.enabled = *enabled
 		changed++
 	}
+	target := next.names
+	if registry {
+		target = next.registered
+	}
 	for _, name := range add {
 		key := strings.ToLower(name)
-		if _, exists := next.names[key]; !exists {
-			next.names[key] = name
+		if _, exists := target[key]; !exists {
+			target[key] = name
 			changed++
 		}
 	}
 	for _, name := range remove {
 		key := strings.ToLower(name)
-		if _, exists := next.names[key]; exists {
-			delete(next.names, key)
+		if _, exists := target[key]; exists {
+			delete(target, key)
+			if registry {
+				delete(next.names, key)
+			}
 			changed++
 		}
 	}
@@ -128,7 +178,11 @@ func (s *Store) Update(enabled *bool, add, remove []string) (int, error) {
 	for _, key := range next.keys {
 		players = append(players, next.names[key])
 	}
-	data, err := json.Marshal(diskPolicy{Enabled: next.enabled, Players: players})
+	registered := make([]string, 0, len(next.registered))
+	for _, key := range next.registeredKeys {
+		registered = append(registered, next.registered[key])
+	}
+	data, err := json.Marshal(diskPolicy{Enabled: next.enabled, Players: players, RegisteredPlayers: registered})
 	if err != nil {
 		return 0, err
 	}
@@ -159,56 +213,50 @@ func saveAtomic(path string, data []byte) error {
 }
 
 type Page struct {
-	Enabled bool     `json:"enabled"`
-	Total   int      `json:"total"`
-	Matched int      `json:"matched"`
-	Page    int      `json:"page"`
-	Pages   int      `json:"pages"`
-	Players []string `json:"players"`
+	Enabled     bool     `json:"enabled"`
+	Total       int      `json:"total"`
+	Matched     int      `json:"matched"`
+	Page        int      `json:"page"`
+	Pages       int      `json:"pages"`
+	Players     []string `json:"players"`
+	Whitelisted []string `json:"whitelisted"`
 }
 
-func (s *Store) List(query string, page int) Page {
+func (s *Store) List(query string, page int) Page        { return s.list(query, page, false) }
+func (s *Store) ListPlayers(query string, page int) Page { return s.list(query, page, true) }
+
+func (s *Store) list(query string, page int, registry bool) Page {
 	const pageSize = 50
 	p := s.current.Load()
+	names, keys := p.names, p.keys
+	if registry {
+		names = p.registered
+		keys = p.registeredKeys
+	}
 	query = strings.ToLower(query)
+	matched := make([]string, 0)
+	for _, key := range keys {
+		if strings.Contains(key, query) {
+			matched = append(matched, key)
+		}
+	}
+	pages := (len(matched) + pageSize - 1) / pageSize
+	if pages < 1 {
+		pages = 1
+	}
+	if page > pages {
+		page = pages
+	}
 	if page < 1 {
 		page = 1
 	}
-	// Bound the offset by the list length, including malicious page parameters.
-	if max := len(p.keys)/pageSize + 1; page > max {
-		page = max
-	}
-	result := Page{Enabled: p.enabled, Total: len(p.keys), Page: page, Players: make([]string, 0, pageSize)}
-	start := (page - 1) * pageSize
-	for _, key := range p.keys {
-		if query != "" && !strings.Contains(key, query) {
-			continue
+	result := Page{Enabled: p.enabled, Total: len(names), Matched: len(matched), Page: page, Pages: pages, Players: []string{}, Whitelisted: []string{}}
+	for i := (page - 1) * pageSize; i < len(matched) && i < page*pageSize; i++ {
+		key := matched[i]
+		result.Players = append(result.Players, names[key])
+		if _, ok := p.names[key]; ok {
+			result.Whitelisted = append(result.Whitelisted, names[key])
 		}
-		if result.Matched >= start && len(result.Players) < pageSize {
-			result.Players = append(result.Players, p.names[key])
-		}
-		result.Matched++
-	}
-	result.Pages = (result.Matched + pageSize - 1) / pageSize
-	if result.Pages < 1 {
-		result.Pages = 1
-	}
-	if page > result.Pages {
-		return s.listLastPage(p, query, result.Pages)
 	}
 	return result
-}
-
-func (s *Store) listLastPage(p *policy, query string, page int) Page {
-	r := Page{Enabled: p.enabled, Total: len(p.keys), Page: page, Pages: page, Players: make([]string, 0, 50)}
-	for _, key := range p.keys {
-		if query != "" && !strings.Contains(key, query) {
-			continue
-		}
-		if r.Matched >= (page-1)*50 {
-			r.Players = append(r.Players, p.names[key])
-		}
-		r.Matched++
-	}
-	return r
 }

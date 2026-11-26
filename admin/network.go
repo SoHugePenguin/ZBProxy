@@ -277,10 +277,31 @@ func validateNetwork(c *config.Root) error {
 		r.Value = strings.TrimSpace(r.Value)
 		switch r.Kind {
 		case "name":
-			if !validName(r.Value) {
-				return errors.New("分流玩家名必须是 1–16 位字母、数字或下划线")
+			if len(r.Players) > 0 && r.Value != "" {
+				return errors.New("分流规则不能同时设置单个玩家和玩家列表")
+			}
+			names := r.Players
+			if len(names) == 0 {
+				names = []string{r.Value}
+			}
+			for j, name := range names {
+				name = strings.TrimSpace(name)
+				if !validName(name) {
+					return errors.New("分流玩家名必须是 1–16 位字母、数字或下划线")
+				}
+				key := "name\x00" + strings.ToLower(name)
+				if seen[key] {
+					return fmt.Errorf("玩家 %s 已被其他分流规则占用，每位玩家只能分配一个出口", name)
+				}
+				seen[key] = true
+				if len(r.Players) > 0 {
+					r.Players[j] = name
+				}
 			}
 		case "uuid":
+			if len(r.Players) > 0 {
+				return errors.New("UUID 规则不能包含玩家名列表")
+			}
 			v := strings.ToLower(strings.ReplaceAll(r.Value, "-", ""))
 			decoded, err := hex.DecodeString(v)
 			if err != nil || len(decoded) != 16 || v == strings.Repeat("0", 32) {
@@ -290,9 +311,12 @@ func validateNetwork(c *config.Root) error {
 		default:
 			return errors.New("分流类型必须是玩家名或 UUID")
 		}
-		key := r.Service + "\x00" + r.Kind + "\x00" + strings.ToLower(r.Value)
+		if r.Kind == "name" {
+			continue
+		}
+		key := r.Kind + "\x00" + strings.ToLower(r.Value)
 		if seen[key] {
-			return errors.New("同一入口不能重复配置相同玩家的分流规则")
+			return errors.New("同一玩家不能重复配置分流规则")
 		}
 		seen[key] = true
 	}

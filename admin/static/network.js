@@ -2,6 +2,8 @@
 let networkState, networkView = 'outbounds', savingNetwork = false, testingAll = false;
 const runningProbes = new Set(), probeResults = new Map();
 const clone = value => JSON.parse(JSON.stringify(value));
+const routePlayers = item => item.Players?.length ? item.Players : item.Kind === 'name' && item.Value ? [item.Value] : [];
+const routeLabel = item => item.Kind === 'uuid' ? item.Value : routePlayers(item).join('、');
 const icon = name => { const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); svg.classList.add('icon'); svg.setAttribute('aria-hidden', 'true'); const use = document.createElementNS(svg.namespaceURI, 'use'); use.setAttribute('href', `/icons.svg#${name}`); svg.append(use); return svg; };
 function action(name, title, callback, danger = false) { const b = document.createElement('button'); b.type = 'button'; b.className = `icon-button${danger ? ' danger' : ''}`; b.title = title; b.setAttribute('aria-label', title); b.append(icon(name)); b.addEventListener('click', callback); return b; }
 function cell(text, className = '') { const td = document.createElement('td'); td.textContent = text; td.className = className; return td; }
@@ -11,8 +13,8 @@ const proxyName = value => ({'':'直连', direct:'直连', socks:'SOCKS5', socks
 function setView(view) {
   networkView = view;
   document.querySelectorAll('[data-view]').forEach(b => { if (b.dataset.view === view) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
-  $('whitelist-panel').hidden = view !== 'whitelist'; $('network-panel').hidden = view === 'whitelist' || view === 'monitor'; $('monitor-panel').hidden = view !== 'monitor';
-  if (view !== 'whitelist' && view !== 'monitor') renderNetwork();
+  $('whitelist-panel').hidden = !['players','whitelist'].includes(view); $('network-panel').hidden = ['players','whitelist','monitor'].includes(view); $('monitor-panel').hidden = view !== 'monitor';
+  if (['players','whitelist'].includes(view)) showPlayerView(view); else if (view !== 'monitor') renderNetwork();
   document.dispatchEvent(new CustomEvent('network-view-changed', {detail:view}));
 }
 async function loadNetwork() {
@@ -22,7 +24,7 @@ async function loadNetwork() {
 }
 function renderNetwork() {
   const labels = {outbounds:['出口线路','添加出口'], services:['入口端口','添加入口'], routes:['玩家分流','添加规则']};
-  if (networkView === 'whitelist' || networkView === 'monitor') return;
+  if (['players','whitelist','monitor'].includes(networkView)) return;
   $('network-title').textContent = labels[networkView][0]; $('network-add-label').textContent = labels[networkView][1];
   $('probe-all').hidden = $('probe-mode-label').hidden = networkView !== 'outbounds';
   $('network-add').disabled = !networkState || savingNetwork; $('probe-all').disabled = !networkState || testingAll;
@@ -38,11 +40,11 @@ function renderNetwork() {
       const p = item.ProxyOptions || {}, result = probeResults.get(item.Name);
       row.append(cell(item.Name, 'strong'), cell(hostPort(item.TargetAddress || '', item.TargetPort), 'mono'), cell(`${proxyName(p.Type)}${p.Address ? ` · ${p.Address}` : ''}`), cell(p.Username || '无'), cell(runningProbes.has(item.Name) ? '测试中…' : result ? result.AverageLabel : '未测试'));
     } else if (networkView === 'services') row.append(cell(item.Name, 'strong'), cell(hostPort(item.Bind || '0.0.0.0', item.Listen), 'mono'), cell(item.DefaultOutbound || '沿用原有路由'), cell(item.Encryption?.Enabled ? 'Trojan / TLS' : 'TCP'));
-    else row.append(cell(item.Value, item.Kind === 'uuid' ? 'mono uuid' : 'strong'), cell(item.Kind === 'uuid' ? 'UUID' : '玩家名'), cell(item.Service || '全部入口'), cell(item.Outbound), cell(item.Enabled ? '已启用' : '已停用', item.Enabled ? 'success-text' : 'muted'));
+    else row.append(cell(routeLabel(item), item.Kind === 'uuid' ? 'mono uuid' : 'strong'), cell(item.Kind === 'uuid' ? 'UUID' : '玩家名'), cell(item.Service || '全部入口'), cell(item.Outbound), cell(item.Enabled ? '已启用' : '已停用', item.Enabled ? 'success-text' : 'muted'));
     const actions = document.createElement('td'); actions.className = 'row-actions';
     if (networkView === 'outbounds') { const b = action('activity', `测试 ${item.Name}`, () => probe(item.Name)); b.disabled = runningProbes.has(item.Name); actions.append(b); }
-    const edit = action('pencil', `编辑 ${item.Name || item.Value}`, () => openEditor(networkView, index)); edit.disabled = savingNetwork;
-    const remove = action('trash', `删除 ${item.Name || item.Value}`, () => removeNetworkItem(networkView, index), true); remove.disabled = savingNetwork;
+    const edit = action('pencil', `编辑 ${item.Name || routeLabel(item)}`, () => openEditor(networkView, index)); edit.disabled = savingNetwork;
+    const remove = action('trash', `删除 ${item.Name || routeLabel(item)}`, () => removeNetworkItem(networkView, index), true); remove.disabled = savingNetwork;
     actions.append(edit, remove); row.append(actions); [...row.children].forEach((td, i) => { td.dataset.label = heads[networkView][i]; }); fragment.append(row);
   });
   if (!items.length) { const row = document.createElement('tr'); const td = cell(`暂无${labels[networkView][0]}`, 'empty'); td.colSpan = heads[networkView].length; row.append(td); fragment.append(row); }
@@ -56,7 +58,7 @@ async function saveNetwork(next) {
 }
 async function removeNetworkItem(kind, index) {
   const key = kind === 'routes' ? 'player_routes' : kind, item = networkState[key][index];
-  if (!await confirmAction('删除配置', `确定删除 ${item.Name || item.Value}？`, '删除')) return;
+  if (!await confirmAction('删除配置', `确定删除 ${item.Name || routeLabel(item)}？`, '删除')) return;
   const next = clone(networkState); next[key].splice(index, 1);
   try { await saveNetwork(next); } catch (error) { notice(error.message, true); }
 }
@@ -72,8 +74,12 @@ function field(parent, label, id, type = 'text', value = '', options = {}) {
   parent.append(wrap); return input;
 }
 function group(parent, title) { const section = document.createElement('fieldset'); const legend = document.createElement('legend'); legend.textContent = title; section.append(legend); parent.append(section); return section; }
-function openEditor(kind, index = -1) {
+async function openEditor(kind, index = -1) {
   if (!networkState || savingNetwork) return;
+  let routePicker;
+  if (kind === 'routes') {
+    try { const fresh = await api('/api/network'); const changed = fresh.revision !== networkState.revision; networkState = fresh; renderNetwork(); if (changed && index >= 0) { notice('配置已变化，请重新选择要编辑的规则。'); return; } } catch (error) { notice(error.message, true); return; }
+  }
   const key = kind === 'routes' ? 'player_routes' : kind, original = index < 0 ? null : networkState[key][index];
   $('editor-title').textContent = `${original ? '编辑' : '添加'}${kind === 'outbounds' ? '出口' : kind === 'services' ? '入口' : '分流规则'}`;
   const parent = $('editor-fields'); parent.replaceChildren(); $('editor-error').hidden = true;
@@ -99,10 +105,16 @@ function openEditor(kind, index = -1) {
     const update = () => { tls.hidden = !encrypted.checked; $('f-cert').required = $('f-key').required = encrypted.checked; }; encrypted.addEventListener('change', update); update();
   } else {
     const item = original || {Enabled:true,Kind:'name',Service:''};
-    const type = field(parent, '匹配方式', 'f-kind', 'select', item.Kind, {choices:[['name','玩家名'],['uuid','UUID']]});
-    field(parent, '玩家名 / UUID', 'f-value', 'text', item.Value, {required:true,autocomplete:'off'});
-    const hint = document.createElement('p'); hint.className = 'field-help'; hint.textContent = '旧版客户端（如 1.8.9）请选择玩家名。UUID 匹配仅适用于携带 UUID 的客户端。'; parent.append(hint);
-    type.addEventListener('change', () => { $('f-value').maxLength = type.value === 'name' ? 16 : 36; });
+    if (item.Kind === 'uuid') {
+      field(parent, 'UUID（旧规则）', 'f-value', 'text', item.Value, {required:true,autocomplete:'off'});
+    } else {
+      const label = document.createElement('h2'); label.textContent = '选择玩家'; parent.append(label);
+      const hint = document.createElement('p'); hint.className = 'field-help'; hint.textContent = '从已收录玩家中多选。同一玩家只能加入一条分流规则，停用规则也保留占用。'; parent.append(hint);
+      const assigned = new Map();
+      networkState.player_routes.forEach((rule, i) => { if (i !== index) for (const name of routePlayers(rule)) assigned.set(name.toLowerCase(), `已分配：${rule.Outbound}${rule.Enabled ? '' : '（停用）'}`); });
+      const picker = document.createElement('div'); parent.append(picker);
+      routePicker = createPlayerPicker(picker, {selected:routePlayers(item),assigned});
+    }
     field(parent, '入口', 'f-service', 'select', item.Service, {choices:[['','全部入口'],...networkState.services.map(inbound => [inbound.Name,`${inbound.Name} · ${inbound.Listen}`])]});
     field(parent, '指定出口', 'f-outbound', 'select', item.Outbound || choices[0]?.[0], {choices,required:true}); field(parent, '启用规则', 'f-enabled', 'checkbox', item.Enabled);
   }
@@ -118,7 +130,11 @@ function openEditor(kind, index = -1) {
     } else if (kind === 'services') {
       item.Name = value('f-name'); item.Bind = value('f-bind'); item.Listen = Number(value('f-port')); item.DefaultOutbound = value('f-default');
       if (original?.Encryption || $('f-encrypted').checked || value('f-cert') || value('f-key') || $('f-tls-password').value) item.Encryption = {Enabled:$('f-encrypted').checked,CertFile:value('f-cert'),KeyFile:value('f-key'),Password:$('f-tls-password').value};
-    } else item = {Kind:value('f-kind'),Value:value('f-value'),Service:value('f-service'),Outbound:value('f-outbound'),Enabled:$('f-enabled').checked};
+    } else {
+      const players = routePicker?.values();
+      if (players && !players.length) { $('editor-error').textContent = '请至少选择一位已收录玩家。'; $('editor-error').hidden = false; return; }
+      item = {Kind:players ? 'name' : 'uuid', ...(players ? {Players:players} : {Value:value('f-value')}), Service:value('f-service'),Outbound:value('f-outbound'),Enabled:$('f-enabled').checked};
+    }
     if (index < 0) next[key].push(item); else next[key][index] = item;
     $('editor-save').disabled = true; $('editor-cancel').disabled = $('editor-close').disabled = true; $('editor-error').hidden = true;
     try { await saveNetwork(next); $('editor-dialog').close(); }
@@ -147,7 +163,7 @@ $('network-add').addEventListener('click', () => openEditor(networkView));
 document.querySelectorAll('[data-view]').forEach(b => b.addEventListener('click', () => setView(b.dataset.view)));
 $('editor-close').addEventListener('click', () => $('editor-dialog').close()); $('editor-cancel').addEventListener('click', () => $('editor-dialog').close());
 $('editor-dialog').addEventListener('cancel', event => { if (savingNetwork) event.preventDefault(); });
-$('refresh').addEventListener('click', () => { if (networkView !== 'whitelist' && networkView !== 'monitor') loadNetwork(); });
+$('refresh').addEventListener('click', () => { if (!['players','whitelist','monitor'].includes(networkView)) loadNetwork(); });
 $('probe-all').addEventListener('click', async () => { if (!networkState || testingAll) return; testingAll = true; renderNetwork(); const names = networkState.outbounds.map(out => out.Name), mode = $('probe-mode').value; try { for (const name of names) await probe(name, mode); } finally { testingAll = false; renderNetwork(); } });
 $('clear-results').addEventListener('click', () => { probeResults.clear(); renderProbes(); renderNetwork(); });
 loadNetwork();

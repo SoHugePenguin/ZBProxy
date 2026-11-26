@@ -42,6 +42,15 @@ func TestAPIAndAccessProtection(t *testing.T) {
 	if w := request("POST", "/api/players", `{"names":["Steve","Alex"]}`, true, true, ""); w.Code != 200 {
 		t.Fatalf("add: %d %s", w.Code, w.Body.String())
 	}
+	if w := request("POST", "/api/whitelist", `{"names":["Steve","Visitor"]}`, true, true, ""); w.Code != 400 {
+		t.Fatalf("unregistered whitelist add: %d", w.Code)
+	}
+	if s.List("", 1).Total != 0 {
+		t.Fatal("registration automatically added whitelist members")
+	}
+	if w := request("POST", "/api/whitelist", `{"names":["Steve","Alex"]}`, true, true, ""); w.Code != 200 {
+		t.Fatalf("whitelist add: %d", w.Code)
+	}
 	if w := request("PUT", "/api/whitelist", `{"enabled":true}`, true, true, ""); w.Code != 200 {
 		t.Fatalf("toggle: %d", w.Code)
 	}

@@ -16,7 +16,7 @@
   <main>
     <div class="intro"><div><div class="eyebrow">ZBPROXY</div><h1>代理控制台</h1></div><button id="refresh" class="button secondary" type="button" title="刷新当前列表" aria-label="刷新当前列表"><svg class="icon" aria-hidden="true"><use href="/icons.svg#refresh"/></svg></button></div>
     <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
-    <nav class="tabs" aria-label="管理导航"><button type="button" data-view="outbounds" aria-current="page">出口线路 <span id="outbound-count" class="count">0</span></button><button type="button" data-view="services">入口端口</button><button type="button" data-view="routes">玩家分流</button><button type="button" data-view="monitor">连接监控</button><button type="button" data-view="whitelist">白名单</button></nav>
+    <nav class="tabs" aria-label="管理导航"><button type="button" data-view="outbounds" aria-current="page">出口线路 <span id="outbound-count" class="count">0</span></button><button type="button" data-view="services">入口端口</button><button type="button" data-view="routes">玩家分流</button><button type="button" data-view="monitor">连接监控</button><button type="button" data-view="players">玩家收录</button><button type="button" data-view="whitelist">白名单</button></nav>
     <section id="monitor-panel" aria-labelledby="monitor-title" hidden>
       <div class="section-toolbar"><h2 id="monitor-title">连接监控</h2><span id="monitor-updated" class="muted small" role="status" aria-live="polite">正在读取</span></div>
       <div id="monitor-error" class="notice error" role="alert" hidden></div>
@@ -34,17 +34,18 @@
       <div id="probe-results" hidden><div class="section-toolbar"><h2>线路测试结果</h2><button id="clear-results" class="button secondary" type="button">清空结果</button></div><div class="network-table-wrap"><table><thead><tr><th>出口</th><th>测试方式</th><th>成功 / 次数</th><th>平均耗时</th><th>各次结果</th><th>测试时间</th></tr></thead><tbody id="probe-rows"></tbody></table></div></div>
     </section>
     <div id="whitelist-panel" hidden>
-    <section class="policy-card" aria-labelledby="policy-title"><div class="policy-icon" aria-hidden="true">✓</div><div class="policy-copy"><div class="policy-heading"><h2 id="policy-title">白名单保护</h2><span id="mode" class="badge">正在加载</span></div><p id="policy-description">正在读取访问设置…</p></div><button id="toggle" class="switch" type="button" role="switch" aria-checked="false" aria-label="启用白名单保护" disabled><span></span></button></section>
+    <section id="policy-card" class="policy-card" aria-labelledby="policy-title"><div class="policy-icon" aria-hidden="true">✓</div><div class="policy-copy"><div class="policy-heading"><h2 id="policy-title">白名单保护</h2><span id="mode" class="badge">正在加载</span></div><p id="policy-description">正在读取访问设置…</p></div><button id="toggle" class="switch" type="button" role="switch" aria-checked="false" aria-label="启用白名单保护" disabled><span></span></button></section>
     <div class="workspace">
       <section class="card members" aria-labelledby="members-title">
-        <div class="card-heading"><div class="heading-line"><h2 id="members-title">已收录玩家</h2><span id="count" class="count">—</span></div><span class="muted small">人数不限</span></div>
+        <div class="card-heading"><div class="heading-line"><h2 id="members-title">白名单玩家</h2><span id="count" class="count">—</span></div><span class="muted small">人数不限</span></div>
         <form id="search-form" class="search-form" role="search"><label class="sr-only" for="search">搜索玩家名</label><span aria-hidden="true" class="search-icon">⌕</span><input id="search" type="search" placeholder="搜索玩家名…" maxlength="16" autocomplete="off"><button class="button secondary compact" type="submit">搜索</button></form>
         <div class="table-wrap"><table><thead><tr><th scope="col">玩家名</th><th scope="col" class="permission-column">名单状态</th><th scope="col" class="actions-column">操作</th></tr></thead><tbody id="players"><tr><td colspan="3" class="empty">正在加载白名单…</td></tr></tbody></table></div>
         <div class="pagination"><span id="result-count" class="muted small">每页最多 50 人</span><div class="pager"><button id="previous" class="page-button" type="button" aria-label="上一页" disabled>←</button><span id="page-label" class="small">1 / 1</span><button id="next" class="page-button" type="button" aria-label="下一页" disabled>→</button></div></div>
       </section>
       <aside>
-        <section class="card add-card" aria-labelledby="add-title"><h2 id="add-title">添加玩家</h2><p class="muted small">支持一次添加多个玩家，重复名字会自动跳过。</p><form id="add-form"><label for="names">Minecraft 玩家名</label><textarea id="names" rows="6" placeholder="例如：&#10;Steve&#10;Alex&#10;My_Friend" spellcheck="false" autocapitalize="off" autocomplete="off" required></textarea><p class="field-help" id="names-help">每行一个，也可用空格或逗号分隔。<br>1–16 位英文字母、数字或下划线。</p><button id="add" class="button primary full" type="submit">＋ 添加到白名单</button></form></section>
-        <section class="help-card"><h2>修改即时生效</h2><p>保存后立即用于新的登录请求，无需重启代理。已经连接的玩家不会被踢出。</p><p>这里管理的是玩家名，正版身份仍由目标服务器验证。原有配置中的访问限制继续生效。</p></section>
+        <section id="registration-card" class="card add-card" aria-labelledby="add-title"><h2 id="add-title">添加玩家</h2><p class="muted small">支持一次添加多个玩家，重复名字会自动跳过。</p><form id="add-form"><label for="names">Minecraft 玩家名</label><textarea id="names" rows="6" placeholder="例如：&#10;Steve&#10;Alex&#10;My_Friend" spellcheck="false" autocapitalize="off" autocomplete="off" required></textarea><p class="field-help" id="names-help">每行一个，也可用空格或逗号分隔。<br>1–16 位英文字母、数字或下划线。</p><button id="add" class="button primary full" type="submit">＋ 收录玩家</button></form></section>
+        <section id="whitelist-add-card" class="card add-card"><h2>添加白名单</h2><p class="muted small">只能从已收录玩家中选择，支持搜索和多选。</p><form id="whitelist-add-form"><div id="whitelist-picker"></div><button id="whitelist-add" class="button primary full" type="submit" disabled>添加到白名单</button></form></section>
+        <section class="help-card"><h2>收录与放行分开管理</h2><p>收录玩家不会自动加入白名单。删除收录会同时移除白名单资格，已有分流仍保留占用，可在玩家分流中编辑或删除。</p><h2>修改即时生效</h2><p>保存后立即用于新的登录请求，无需重启代理。已经连接的玩家不会被踢出。</p><p>这里管理的是玩家名，正版身份仍由目标服务器验证。原有配置中的访问限制继续生效。</p></section>
       </aside>
     </div>
     </div>

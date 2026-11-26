@@ -18,6 +18,7 @@ type PlayerRoute struct {
 	Kind     string
 	Value    string
 	Outbound string
+	Players  []string `json:",omitempty"`
 }
 
 type Rule struct {

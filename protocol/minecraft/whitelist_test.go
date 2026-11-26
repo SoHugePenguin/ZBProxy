@@ -36,6 +36,9 @@ func TestManagedWhitelistRejectsBeforeDial(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err = s.UpdatePlayers([]string{"Steve", "Visitor"}, nil); err != nil {
+		t.Fatal(err)
+	}
 	on := true
 	if _, err = s.Update(&on, []string{"Steve"}, nil); err != nil {
 		t.Fatal(err)

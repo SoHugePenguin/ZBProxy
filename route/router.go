@@ -256,6 +256,14 @@ func selectPlayerOutbound(fallback string, metadata *adapter.Metadata, rules []c
 					continue
 				}
 				match := kind == "name" && strings.EqualFold(rule.Value, m.PlayerName)
+				if kind == "name" {
+					for _, name := range rule.Players {
+						if strings.EqualFold(name, m.PlayerName) {
+							match = true
+							break
+						}
+					}
+				}
 				if kind == "uuid" && m.UUID != [16]byte{} {
 					match = strings.EqualFold(strings.ReplaceAll(rule.Value, "-", ""), hex.EncodeToString(m.UUID[:]))
 				}

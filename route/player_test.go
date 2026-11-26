@@ -33,3 +33,21 @@ func TestPlayerRoutePriorityAndStatusFallback(t *testing.T) {
 		})
 	}
 }
+
+func TestGroupedPlayerRoutes(t *testing.T) {
+	rules := []config.PlayerRoute{{Enabled: true, Kind: "name", Players: []string{"Steve", "Alex"}, Service: "game", Outbound: "group"}}
+	for _, name := range []string{"STEVE", "aLeX"} {
+		metadata := &adapter.Metadata{ServiceName: "game", Minecraft: &adapter.MinecraftMetadata{PlayerName: name}}
+		if got := selectPlayerOutbound("default", metadata, rules); got != "group" {
+			t.Fatalf("%s routed to %s", name, got)
+		}
+		metadata.ServiceName = "other"
+		if got := selectPlayerOutbound("default", metadata, rules); got != "default" {
+			t.Fatal("group ignored service scope")
+		}
+	}
+	rules[0].Enabled = false
+	if got := selectPlayerOutbound("default", &adapter.Metadata{ServiceName: "game", Minecraft: &adapter.MinecraftMetadata{PlayerName: "Steve"}}, rules); got != "default" {
+		t.Fatal("disabled group matched")
+	}
+}

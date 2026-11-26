@@ -215,10 +215,15 @@ func decode(w http.ResponseWriter, r *http.Request, value any) error {
 func serveAPI(w http.ResponseWriter, r *http.Request, s *Store) {
 	var enabled *bool
 	var add, remove []string
+	registry := r.URL.Path == "/api/players"
 	switch {
-	case r.URL.Path == "/api/whitelist" && r.Method == http.MethodGet:
+	case (registry || r.URL.Path == "/api/whitelist") && r.Method == http.MethodGet:
 		page, _ := strconv.Atoi(r.URL.Query().Get("page"))
-		jsonResponse(w, http.StatusOK, s.List(r.URL.Query().Get("q"), page))
+		if registry {
+			jsonResponse(w, http.StatusOK, s.ListPlayers(r.URL.Query().Get("q"), page))
+		} else {
+			jsonResponse(w, http.StatusOK, s.List(r.URL.Query().Get("q"), page))
+		}
 		return
 	case r.URL.Path == "/api/whitelist" && r.Method == http.MethodPut:
 		var body struct {
@@ -229,7 +234,7 @@ func serveAPI(w http.ResponseWriter, r *http.Request, s *Store) {
 			return
 		}
 		enabled = body.Enabled
-	case r.URL.Path == "/api/players" && (r.Method == http.MethodPost || r.Method == http.MethodDelete):
+	case (registry || r.URL.Path == "/api/whitelist") && (r.Method == http.MethodPost || r.Method == http.MethodDelete):
 		var body struct {
 			Names []string `json:"names"`
 		}
@@ -250,14 +255,18 @@ func serveAPI(w http.ResponseWriter, r *http.Request, s *Store) {
 		jsonResponse(w, http.StatusNotFound, map[string]string{"error": "接口不存在或请求方法不支持"})
 		return
 	}
-	changed, err := s.Update(enabled, add, remove)
+	var changed int
+	var err error
+	if registry {
+		changed, err = s.UpdatePlayers(add, remove)
+	} else {
+		changed, err = s.Update(enabled, add, remove)
+	}
 	if err != nil {
 		status := http.StatusInternalServerError
-		for _, name := range append(add, remove...) {
-			if !validName(name) {
-				status = http.StatusBadRequest
-				break
-			}
+		var invalid *inputError
+		if errors.As(err, &invalid) {
+			status = http.StatusBadRequest
 		}
 		message := "保存失败，请检查白名单文件目录和写入权限"
 		if status == http.StatusBadRequest {

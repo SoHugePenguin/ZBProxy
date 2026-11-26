@@ -280,3 +280,50 @@ func TestNetworkWatchSurvivesAtomicReplacements(t *testing.T) {
 		t.Fatal("watcher reapplied an update already saved through the website")
 	}
 }
+
+func TestGroupedPlayerRoutesAndExclusiveAssignment(t *testing.T) {
+	m, runtime, path := networkFixture(t)
+	state := m.Snapshot()
+	state.PlayerRoutes = []config.PlayerRoute{{Kind: "name", Players: []string{"Steve", "Alex"}, Outbound: "us", Enabled: true}}
+	if err := m.Save(state); err != nil {
+		t.Fatal(err)
+	}
+	if got := m.Snapshot().PlayerRoutes[0].Players; len(got) != 2 {
+		t.Fatalf("lost group: %v", got)
+	}
+	before, _ := os.ReadFile(path)
+	calls := runtime.calls
+	for _, conflict := range []config.PlayerRoute{
+		{Kind: "name", Value: "sTeVe", Service: "game", Outbound: "us", Enabled: true},
+		{Kind: "name", Players: []string{"Bob", "ALEX"}, Outbound: "us", Enabled: false},
+	} {
+		state = m.Snapshot()
+		state.PlayerRoutes = append(state.PlayerRoutes, conflict)
+		if err := m.Save(state); err == nil {
+			t.Fatal("duplicate player accepted across service/status/legacy format")
+		}
+	}
+	state = m.Snapshot()
+	state.PlayerRoutes = []config.PlayerRoute{{Kind: "name", Players: []string{"Bob", "BOB"}, Outbound: "us"}}
+	if err := m.Save(state); err == nil {
+		t.Fatal("duplicate within group accepted")
+	}
+	state.PlayerRoutes[0].Players = []string{}
+	if err := m.Save(state); err == nil {
+		t.Fatal("empty group accepted")
+	}
+	state.PlayerRoutes[0].Players = []string{"invalid-name"}
+	if err := m.Save(state); err == nil {
+		t.Fatal("invalid group accepted")
+	}
+	after, _ := os.ReadFile(path)
+	if !bytes.Equal(before, after) || runtime.calls != calls {
+		t.Fatal("rejected group changed file/runtime")
+	}
+	state = m.Snapshot()
+	state.PlayerRoutes[0].Players = []string{"Alex"}
+	state.PlayerRoutes = append(state.PlayerRoutes, config.PlayerRoute{Kind: "name", Players: []string{"STEVE"}, Service: "game", Outbound: "us", Enabled: true})
+	if err := m.Save(state); err != nil {
+		t.Fatalf("released player could not be reassigned: %v", err)
+	}
+}

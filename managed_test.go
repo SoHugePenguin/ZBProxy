@@ -158,11 +158,16 @@ func TestManagedRoutesHotUpdateAndRollback(t *testing.T) {
 	}
 	state := manager.Snapshot()
 	state.PlayerRoutes[0].Outbound = "a"
+	state.PlayerRoutes[0].Value = ""
+	state.PlayerRoutes[0].Players = []string{"Alex", "Bob"}
 	if err = manager.Save(state); err != nil {
 		t.Fatal(err)
 	}
 	updated := login(t, inPort, "Alex", nil)
 	expectByte(t, updated, 'A')
+	<-portsA
+	grouped := login(t, inPort, "bOB", nil)
+	expectByte(t, grouped, 'A')
 	<-portsA
 	alex.Write([]byte{'z'})
 	expectByte(t, alex, 'z')
